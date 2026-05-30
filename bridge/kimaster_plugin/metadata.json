@@ -1,0 +1,10 @@
+{
+  "identifier": "com.kimaster.bridge",
+  "name": "KiMaster Bridge",
+  "description": "Opens a local WebSocket server for KiMaster live board sync.",
+  "author": "KiMaster Contributors",
+  "version": "0.1.0",
+  "kicad_version": "7.0",
+  "type": "action",
+  "icon": "kimaster_icon.png"
+}

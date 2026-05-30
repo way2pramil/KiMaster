@@ -1,0 +1,42 @@
+[package]
+name = "ki-master"
+version = "0.1.0"
+edition = "2021"
+description = "KiMaster — Advanced KiCad Companion"
+authors = ["KiMaster Contributors"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri              = { version = "2", features = [] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+tokio              = { version = "1", features = ["full"] }
+tokio-tungstenite  = { version = "0.26", features = ["native-tls"] }
+futures-util       = "0.3"
+anyhow             = "1"
+tempfile           = "3"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# Phase 4A — project storage
+rusqlite           = { version = "0.32", features = ["bundled"] }
+notify             = "7"
+rfd                = "0.15"
+# Phase 7 — git integration
+which              = "7"
+# Phase 8 — fab pack zip
+zip                = "2"
+# Phase 9B — UCE native HTTP client for LCSC/EasyEDA API
+reqwest            = { version = "0.12", features = ["json", "gzip", "native-tls"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic     = "abort"
+codegen-units = 1
+lto       = true
+opt-level = "s"
+strip     = true

@@ -1,0 +1,106 @@
+/**
+ * KiMaster CSS Reset
+ * Minimal, modern reset. Preserves useful browser defaults.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+  tab-size: 4;
+  height: 100%;
+}
+
+body {
+  height: 100%;
+  line-height: var(--km-line-height-base, 1.5);
+  font-family: var(--km-font, system-ui, sans-serif);
+  font-size: var(--km-font-size-base, 13px);
+  color: var(--km-text-primary, #f4f4f5);
+  background: var(--km-bg-app, #0c0c0d);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+a {
+  color: var(--km-accent, #7b61ff);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--km-font, 'Geist', 'Inter', system-ui, sans-serif);
+  font-weight: var(--km-font-weight-semibold, 600);
+  line-height: var(--km-line-height-tight, 1.3);
+}
+
+p {
+  line-height: var(--km-line-height-base, 1.5);
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--km-font-mono, monospace);
+  font-size: 0.9em;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+[disabled],
+[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--km-border-focus, #7b61ff);
+  outline-offset: 2px;
+  border-radius: var(--km-radius-xs, 4px);
+}
+
+::selection {
+  background: var(--km-accent-muted, rgba(123, 97, 255, 0.25));
+  color: var(--km-text-primary, #f4f4f5);
+}

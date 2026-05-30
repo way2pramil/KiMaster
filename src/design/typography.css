@@ -1,0 +1,118 @@
+/**
+ * KiMaster Typography — Skeuomorphic Minimalism
+ * Geist / Inter — clean, neutral, engineering terminal.
+ * Hierarchy via font-weight and alpha opacity — NOT uppercase, NOT decorative.
+ * Tabular nums enforced on all data/metric displays.
+ */
+
+/* ── Headings — medium-weight, tight tracking ─────────────────────────── */
+.km-h1 {
+  font-size: var(--km-font-size-3xl);
+  font-weight: var(--km-font-weight-semibold);
+  line-height: var(--km-line-height-tight);
+  letter-spacing: -0.025em;
+  color: var(--km-text-primary);
+}
+.km-h2 {
+  font-size: var(--km-font-size-2xl);
+  font-weight: var(--km-font-weight-semibold);
+  line-height: var(--km-line-height-tight);
+  letter-spacing: -0.02em;
+  color: var(--km-text-primary);
+}
+.km-h3 {
+  font-size: var(--km-font-size-xl);
+  font-weight: var(--km-font-weight-medium);
+  line-height: var(--km-line-height-tight);
+  letter-spacing: -0.015em;
+  color: var(--km-text-primary);
+}
+.km-h4 {
+  font-size: var(--km-font-size-lg);
+  font-weight: var(--km-font-weight-medium);
+  line-height: var(--km-line-height-tight);
+  letter-spacing: -0.01em;
+  color: var(--km-text-primary);
+}
+
+/* ── Body text ──────────────────────────────────────────────────────────── */
+.km-body-lg { font-size: var(--km-font-size-md);   line-height: var(--km-line-height-base); color: var(--km-text-primary); }
+.km-body    { font-size: var(--km-font-size-base);  line-height: var(--km-line-height-base); color: var(--km-text-primary); }
+.km-body-sm { font-size: var(--km-font-size-sm);    line-height: var(--km-line-height-base); color: var(--km-text-secondary); }
+
+/* ── Section labels — small, muted (NOT uppercase) ──────────────────────── */
+.km-label {
+  font-size: var(--km-font-size-xs);
+  font-weight: var(--km-font-weight-medium);
+  letter-spacing: 0.01em;
+  color: var(--km-text-muted);
+}
+.km-label-upper {
+  font-size: 10px;
+  font-weight: var(--km-font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--km-text-muted);
+}
+
+/* ── Caption ─────────────────────────────────────────────────────────────── */
+.km-caption {
+  font-size: var(--km-font-size-xs);
+  color: var(--km-text-secondary);
+  line-height: var(--km-line-height-base);
+}
+
+/* ── Live / telemetry value — tabular nums, Cyan ───────────────────────── */
+.km-metric {
+  font-family: var(--km-font-mono);
+  font-size: var(--km-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--km-live);
+  letter-spacing: 0.02em;
+}
+.km-metric-lg {
+  font-family: var(--km-font-mono);
+  font-size: var(--km-font-size-2xl);
+  font-weight: var(--km-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--km-text-primary);
+}
+
+/* ── Code / path ─────────────────────────────────────────────────────────── */
+.km-code {
+  font-family: var(--km-font-mono);
+  font-size: var(--km-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  background: var(--km-bg-elevated);
+  padding: 1px var(--km-space-1-5);
+  border-radius: var(--km-radius-xs);
+  border: 1px solid var(--km-border);
+  color: var(--km-live);
+}
+.km-pre {
+  font-family: var(--km-font-mono);
+  font-size: var(--km-font-size-sm);
+  font-variant-numeric: tabular-nums;
+  background: var(--km-bg-surface);
+  padding: var(--km-space-3);
+  border-radius: var(--km-radius-md);
+  border: 1px solid var(--km-border);
+  box-shadow: var(--km-bezel);
+  overflow-x: auto;
+  line-height: 1.7;
+  color: var(--km-text-primary);
+}
+
+/* ── Utilities ───────────────────────────────────────────────────────────── */
+.km-truncate    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.km-tabular     { font-variant-numeric: tabular-nums; }
+.km-mono        { font-family: var(--km-font-mono); }
+.km-text-primary   { color: var(--km-text-primary); }
+.km-text-secondary { color: var(--km-text-secondary); }
+.km-text-muted     { color: var(--km-text-muted); }
+.km-text-accent    { color: var(--km-accent-hover); }
+.km-text-live      { color: var(--km-live); }
+.km-text-trace     { color: var(--km-trace); }
+.km-text-success   { color: var(--km-success); }
+.km-text-warning   { color: var(--km-warning); }
+.km-text-danger    { color: var(--km-danger); }

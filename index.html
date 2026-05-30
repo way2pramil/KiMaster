@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="KiMaster — Advanced KiCad Companion" />
+    <title>KiMaster</title>
+    <!--
+      Fonts: Geist (primary) + Inter (fallback) + JetBrains Mono (code/numeric)
+      Geist is Vercel's open-source variable font — clean, geometric, neutral.
+      No decorative/display fonts — engineering terminal aesthetic.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/design/reset.css" />
+    <link rel="stylesheet" href="/src/design/tokens.css" />
+    <link rel="stylesheet" href="/src/design/typography.css" />
+    <link rel="stylesheet" href="/src/design/views.css" />
+    <style>
+      html, body { height: 100%; overflow: hidden; background: var(--km-bg-app); }
+
+      #app {
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+        background: var(--km-bg-app);
+        /* Entry: transform-only — opacity stays 1 so headless/bg windows never blank */
+        animation: km-app-in 0.32s var(--km-ease-out) both;
+      }
+      @keyframes km-app-in {
+        from { transform: translateY(4px); opacity: 0.4; }
+        to   { transform: none;            opacity: 1;   }
+      }
+
+      #main-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        background: var(--km-bg-primary);
+        min-width: 0;
+      }
+
+      /* ── View header ── */
+      #view-header {
+        flex-shrink: 0;
+        height: var(--km-header-height);
+        display: flex;
+        align-items: center;
+        padding: 0 var(--km-space-5);
+        border-bottom: 1px solid var(--km-border);
+        background: var(--km-bg-primary);
+        box-shadow: var(--km-bezel);
+        gap: var(--km-space-3);
+      }
+
+      /* ── Scrollable view ── */
+      #view-container {
+        flex: 1;
+        overflow: auto;
+        min-height: 0;
+      }
+
+      /* ── Toast host ── */
+      #notification-host {
+        position: fixed;
+        bottom: var(--km-space-5);
+        right: var(--km-space-5);
+        z-index: var(--km-z-toast);
+        display: flex;
+        flex-direction: column;
+        gap: var(--km-space-2);
+        pointer-events: none;
+        align-items: flex-end;
+      }
+      #notification-host km-notification { pointer-events: all; }
+    </style>
+  </head>
+  <body>
+    <div id="app" aria-label="KiMaster application">
+      <km-sidebar id="main-sidebar"></km-sidebar>
+      <main id="main-content" role="main">
+        <header id="view-header" aria-label="View header"></header>
+        <div id="view-container" role="region" aria-label="Main content"></div>
+      </main>
+    </div>
+    <div id="notification-host" aria-live="polite" aria-atomic="false" aria-label="Notifications"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

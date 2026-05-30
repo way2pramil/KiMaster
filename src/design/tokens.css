@@ -1,0 +1,195 @@
+/**
+ * KiMaster Design Tokens — Skeuomorphic Minimalism / Linear-Style
+ * ─────────────────────────────────────────────────────────────────
+ * SINGLE SOURCE OF TRUTH — no hardcoded values anywhere else.
+ * Change --km-accent → full UI repaints.
+ *
+ * Palette: OLED black canvas, tiered-gray surfaces, Cobalt Blue actions,
+ *          Safety Cyan for live telemetry, Trace Green for PCB elements.
+ */
+
+:root {
+  /* ── Primary action accent — Cobalt Blue ─────────────────────────────── */
+  --km-accent:          #2563EB;
+  --km-accent-hover:    #3B82F6;
+  --km-accent-active:   #1D4ED8;
+  --km-accent-muted:    rgba(37, 99, 235, 0.12);
+  --km-accent-border:   rgba(37, 99, 235, 0.28);
+  --km-accent-glow:     0 0 16px rgba(37, 99, 235, 0.35);
+
+  /* ── Live telemetry — Safety Cyan (connections, real-time data) ─────── */
+  --km-live:            #06B6D4;
+  --km-live-hover:      #22D3EE;
+  --km-live-muted:      rgba(6, 182, 212, 0.12);
+  --km-live-border:     rgba(6, 182, 212, 0.25);
+  --km-live-glow:       0 0 12px rgba(6, 182, 212, 0.30);
+
+  /* ── PCB trace — Neon Trace Green ───────────────────────────────────── */
+  --km-trace:           #10B981;
+  --km-trace-muted:     rgba(16, 185, 129, 0.12);
+  --km-trace-border:    rgba(16, 185, 129, 0.25);
+
+  /* ── Semantic ─────────────────────────────────────────────────────────── */
+  --km-success:         #10B981;
+  --km-success-muted:   rgba(16, 185, 129, 0.12);
+  --km-warning:         #F59E0B;
+  --km-warning-muted:   rgba(245, 158, 11, 0.12);
+  --km-danger:          #EF4444;
+  --km-danger-muted:    rgba(239, 68, 68, 0.12);
+  --km-info:            #06B6D4;
+  --km-info-muted:      rgba(6, 182, 212, 0.12);
+
+  /* ── Short-form semantic aliases (used in some components) ────────────── */
+  --km-green:           var(--km-success);
+  --km-cyan:            var(--km-live);
+  --km-red:             var(--km-danger);
+
+  /* ── OLED black canvas — tiered gray surfaces ─────────────────────────── */
+  --km-bg-app:          #000000;   /* OLED black — app frame */
+  --km-bg-sidebar:      #000000;   /* sidebar stays pure black */
+  --km-bg-primary:      #0A0A0A;   /* main workspace */
+  --km-bg-secondary:    #0D0D0D;   /* secondary areas */
+  --km-bg-surface:      #111111;   /* cards, panels */
+  --km-bg-elevated:     #161616;   /* elevated surfaces, hover targets */
+  --km-bg-input:        #111111;   /* text inputs */
+  --km-bg-overlay:      rgba(10, 10, 10, 0.75); /* liquid glass overlays */
+
+  /* ── Sidebar specifics ─────────────────────────────────────────────────── */
+  --km-sidebar-bg:         #000000;
+  --km-sidebar-hover:      rgba(255, 255, 255, 0.04);
+  --km-sidebar-active:     rgba(37, 99, 235, 0.10);
+  --km-sidebar-active-bar: var(--km-accent);
+
+  /* ── Text — alpha hierarchy (not color-based) ──────────────────────────── */
+  --km-text-primary:    rgba(255, 255, 255, 0.90);   /* data fields */
+  --km-text-secondary:  rgba(255, 255, 255, 0.55);   /* normal labels */
+  --km-text-muted:      rgba(255, 255, 255, 0.35);   /* structural labels */
+  --km-text-disabled:   rgba(255, 255, 255, 0.18);
+  --km-text-inverse:    #000000;
+  --km-text-accent:     var(--km-accent-hover);
+  --km-text-live:       var(--km-live);
+  --km-text-success:    var(--km-success);
+  --km-text-warning:    var(--km-warning);
+  --km-text-danger:     var(--km-danger);
+
+  /* ── Typography — Inter Variable ──────────────────────────────────────── */
+  --km-font:            'Geist', 'Inter', -apple-system, system-ui, sans-serif;
+  --km-font-mono:       'JetBrains Mono', 'Geist Mono', ui-monospace, monospace;
+  --km-font-size-2xs:   10px;
+  --km-font-size-xs:    11px;
+  --km-font-size-sm:    12px;
+  --km-font-size-base:  13px;
+  --km-font-size-md:    14px;
+  --km-font-size-lg:    16px;
+  --km-font-size-xl:    18px;
+  --km-font-size-2xl:   22px;
+  --km-font-size-3xl:   28px;
+  --km-font-size-4xl:   36px;
+  --km-font-size-5xl:   48px;
+  --km-line-height-tight:  1.3;
+  --km-line-height-base:   1.55;
+  --km-line-height-loose:  1.75;
+  --km-font-weight-normal:   400;
+  --km-font-weight-medium:   500;
+  --km-font-weight-semi:     600;
+  --km-font-weight-semibold: 600;
+  --km-font-weight-bold:     700;
+
+  /* ── Spacing (4-point grid) ────────────────────────────────────────────── */
+  --km-space-0:    0px;
+  --km-space-px:   1px;
+  --km-space-0-5:  2px;
+  --km-space-1:    4px;
+  --km-space-1-5:  6px;
+  --km-space-2:    8px;
+  --km-space-2-5:  10px;
+  --km-space-3:    12px;
+  --km-space-4:    16px;
+  --km-space-5:    20px;
+  --km-space-6:    24px;
+  --km-space-8:    32px;
+  --km-space-10:   40px;
+  --km-space-12:   48px;
+  --km-space-16:   64px;
+
+  /* ── Border radius — tight (Linear-style) ─────────────────────────────── */
+  --km-radius-xs:   3px;
+  --km-radius-sm:   5px;
+  --km-radius-md:   6px;    /* ← primary card radius */
+  --km-radius-lg:   8px;
+  --km-radius-xl:   12px;
+  --km-radius-2xl:  16px;
+  --km-radius-full: 9999px;
+
+  /* ── Borders — edge-lit system ─────────────────────────────────────────── */
+  --km-border:          rgba(255, 255, 255, 0.07);
+  --km-border-strong:   rgba(255, 255, 255, 0.10);
+  --km-border-focus:    var(--km-accent);
+  --km-border-accent:   var(--km-accent-border);
+  --km-border-live:     var(--km-live-border);
+  --km-border-success:  rgba(16, 185, 129, 0.30);
+  --km-border-warning:  rgba(245, 158, 11, 0.30);
+  --km-border-danger:   rgba(239, 68, 68, 0.30);
+
+  /* ── Skeuomorphic bezel sheen — top inner edge highlight ──────────────── */
+  --km-bezel:           inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+  --km-bezel-strong:    inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+
+  /* ── Shadows ───────────────────────────────────────────────────────────── */
+  --km-shadow-xs:    0 1px 2px  rgba(0, 0, 0, 0.60);
+  --km-shadow-sm:    0 2px 6px  rgba(0, 0, 0, 0.65);
+  --km-shadow-md:    0 4px 16px rgba(0, 0, 0, 0.70);
+  --km-shadow-lg:    0 8px 32px rgba(0, 0, 0, 0.75);
+  --km-shadow-xl:    0 16px 60px rgba(0, 0, 0, 0.80);
+  --km-shadow-glow:  var(--km-accent-glow);
+
+  /* ── Layout ────────────────────────────────────────────────────────────── */
+  --km-sidebar-width:      220px;
+  --km-sidebar-collapsed:  48px;
+  --km-header-height:      44px;
+  --km-toolbar-height:     36px;
+  --km-bento-gap:          12px;
+
+  /* ── Z-index ───────────────────────────────────────────────────────────── */
+  --km-z-base:      1;
+  --km-z-overlay:   100;
+  --km-z-dropdown:  200;
+  --km-z-sticky:    300;
+  --km-z-modal:     400;
+  --km-z-toast:     500;
+  --km-z-tooltip:   600;
+  --km-z-palette:   700;
+
+  /* ── Motion — hardware-accelerated only ─────────────────────────────────── */
+  --km-ease:             cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --km-ease-out:         cubic-bezier(0, 0, 0.2, 1);
+  --km-ease-compress:    cubic-bezier(0.2, 0.8, 0.2, 1);
+  --km-ease-spring:      cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  --km-duration-compress: 120ms;  /* button press */
+  --km-duration-fast:    100ms;
+  --km-duration-base:    160ms;
+  --km-duration-slow:    260ms;
+  --km-duration-xl:      400ms;
+
+  /* ── Scrollbar ─────────────────────────────────────────────────────────── */
+  --km-scrollbar-width:   4px;
+  --km-scrollbar-thumb:   rgba(255, 255, 255, 0.10);
+  --km-scrollbar-track:   transparent;
+}
+
+/* ── Liquid glass — floating overlays, command palette, modals ─────────── */
+.km-glass {
+  background: var(--km-bg-overlay);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--km-scrollbar-thumb) var(--km-scrollbar-track);
+}
+*::-webkit-scrollbar        { width: var(--km-scrollbar-width); height: var(--km-scrollbar-width); }
+*::-webkit-scrollbar-track  { background: var(--km-scrollbar-track); }
+*::-webkit-scrollbar-thumb  { background: var(--km-scrollbar-thumb); border-radius: var(--km-radius-full); }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
