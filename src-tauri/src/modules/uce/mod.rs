@@ -39,35 +39,35 @@ pub struct AddToVaultResult {
     pub message:      String,
 }
 
-/// Fetch a component from EasyEDA, parse it, sanitize it,
-/// write it into the vault library, and update the vault index.
-pub async fn add_to_vault(
-    client:       &Client,
-    kimaster_dir: &str,
-    lcsc_id:      &str,
+/// Fetch a component from EasyEDA, parse, sanitize, and write it into one or
+/// more vault directories in a single network round-trip.
+///
+/// `vault_dirs` is a deduplicated list of `.kimaster/` (or global vault) paths.
+/// At minimum one directory must be provided. The first entry is treated as the
+/// "primary" vault for the returned path strings.
+pub async fn add_to_vaults(
+    client:     &Client,
+    vault_dirs: &[String],
+    lcsc_id:    &str,
 ) -> anyhow::Result<AddToVaultResult> {
-    // 1. Fetch raw component data from EasyEDA API
+    if vault_dirs.is_empty() {
+        anyhow::bail!("No vault directories specified");
+    }
+
+    // 1. Fetch raw component data from EasyEDA API (one request for all vaults)
     let raw: EdaRawComponent = client.fetch_component(lcsc_id).await?;
 
-    // 2. Provision vault directory (no-op if already exists)
-    LibraryVault::provision_vault(kimaster_dir)?;
-
-    // 3. Compute symbol origin from bbox/head data
+    // 2. Compute symbol origin
     let (sym_origin_x, sym_origin_y) = EdaParser::compute_symbol_origin(
         raw.sym_head_x, raw.sym_head_y,
         raw.sym_bbox.x, raw.sym_bbox.y,
         raw.sym_bbox.width, raw.sym_bbox.height,
     );
 
-    // 4. Parse symbol from shape array
+    // 3. Parse symbol
     let mut sym = EdaParser::parse_symbol(&raw.sym_shapes, sym_origin_x, sym_origin_y);
-
-    // 4b. Parse multi-unit sub-symbols if present
     if !raw.sub_symbols.is_empty() {
-        // Shared origin: use the first subpart's head coordinates
-        // (matching Python _shared_origin())
         let shared_origin = (raw.sub_symbols[0].head_x, raw.sub_symbols[0].head_y);
-
         for sub in &raw.sub_symbols {
             let sub_sym = EdaParser::parse_symbol(&sub.shapes, shared_origin.0, shared_origin.1);
             sym.sub_units.push(sub_sym);
@@ -85,20 +85,16 @@ pub async fn add_to_vault(
         description:  String::new(),
     };
 
-    // 5. Parse footprint from shape array
+    // 4. Parse footprint
     let mut fp = EdaParser::parse_footprint(
         &raw.fp_shapes, raw.fp_head_x, raw.fp_head_y, raw.fp_is_smd,
     );
 
-    // 6. Sanitize (Brand Sanitizer rule engine)
+    // 5. Sanitize
     SanitizerRules::sanitize_symbol(&mut sym);
     SanitizerRules::sanitize_footprint(&mut fp);
 
-    // 6b. Validate parsed data has usable content BEFORE writing anything.
-    //     If both symbol and footprint are empty, the EasyEDA API returned no
-    //     shape data — this component requires EasyEDA Pro login or the LCSC
-    //     ID points to a Pro-only/unavailable part.  Bail cleanly so the user
-    //     sees an actionable error and no orphan DB row is created.
+    // 6. Validate
     let sym_has_content = !sym.pins.is_empty()
         || !sym.rectangles.is_empty()
         || !sym.polylines.is_empty()
@@ -116,70 +112,76 @@ pub async fn add_to_vault(
             lcsc_id
         );
     }
-
     if !fp_has_content {
         tracing::warn!("No footprint pads for {lcsc_id} — symbol-only component");
     }
     if !sym_has_content {
-        tracing::warn!("No symbol geometry/pins for {lcsc_id} — footprint-only component");
+        tracing::warn!("No symbol pins/geometry for {lcsc_id} — footprint-only component");
     }
 
-    // 7. Download 3D STEP model if available
-    let model_3d_path = if let Some(ref model_3d) = fp.model_3d {
+    // 7. Fetch 3D STEP model bytes once (reused across all vault dirs)
+    let step_bytes: Option<Vec<u8>> = if let Some(ref model_3d) = fp.model_3d {
         if !model_3d.uuid.is_empty() {
             match client.fetch_step_model(&model_3d.uuid).await {
-                Ok(Some(step_bytes)) => {
-                    // Use LCSC ID as filename to avoid collisions
-                    let step_filename = format!("{lcsc_id}.step");
-                    match LibraryVault::write_step_model(kimaster_dir, &step_filename, &step_bytes) {
-                        Ok(abs_path) => Some(abs_path.to_string_lossy().into_owned()),
-                        Err(e) => {
-                            tracing::warn!("Failed to write STEP model: {e}");
-                            None
-                        }
-                    }
-                }
-                Ok(None) => {
-                    tracing::info!("No STEP model available for {lcsc_id}");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to fetch STEP model: {e}");
-                    None
-                }
+                Ok(Some(bytes)) => Some(bytes),
+                Ok(None) => { tracing::info!("No STEP model for {lcsc_id}"); None }
+                Err(e)   => { tracing::warn!("STEP fetch failed: {e}"); None }
             }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+        } else { None }
+    } else { None };
 
-    // 8. Generate S-expressions
-    let sym_block   = KiSymGenerator::generate_symbol_block(&info, &sym);
-    let mod_content = KiModGenerator::generate_footprint(
-        &info,
-        &fp,
-        model_3d_path.as_deref(),
-    );
+    // 8. Symbol block is identical for all vaults
+    let sym_block = KiSymGenerator::generate_symbol_block(&info, &sym);
 
-    // 9. Write to vault
-    LibraryVault::upsert_symbol(kimaster_dir, lcsc_id, &sym_block)?;
-    LibraryVault::write_footprint(kimaster_dir, lcsc_id, &mod_content)?;
-    LibraryVault::upsert_vault_entry(kimaster_dir, &LibraryVault::VaultEntry {
+    let vault_entry = LibraryVault::VaultEntry {
         lcsc_id:      raw.lcsc_id.clone(),
         name:         raw.title.clone(),
         package:      raw.package.clone(),
         manufacturer: raw.manufacturer.clone(),
         mpn:          raw.mpn.clone(),
         description:  String::new(),
-        added_at:     String::new(), // set by SQL DEFAULT
-    })?;
+        added_at:     String::new(),
+    };
 
-    let base = std::path::Path::new(kimaster_dir);
+    // 9. Write to every requested vault directory
+    for vault_dir in vault_dirs {
+        // Ensure the vault structure exists
+        if let Err(e) = LibraryVault::provision_vault(vault_dir) {
+            tracing::warn!("Failed to provision vault {vault_dir}: {e}");
+            continue;
+        }
+
+        // Write 3D model and get its absolute path for this vault
+        let model_3d_path: Option<String> = step_bytes.as_deref()
+            .and_then(|bytes| {
+                let filename = format!("{lcsc_id}.step");
+                LibraryVault::write_step_model(vault_dir, &filename, bytes)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .map_err(|e| { tracing::warn!("Failed to write STEP to {vault_dir}: {e}"); e })
+                    .ok()
+            });
+
+        // Footprint content uses the vault-specific model path
+        let mod_content = KiModGenerator::generate_footprint(&info, &fp, model_3d_path.as_deref());
+
+        if let Err(e) = LibraryVault::upsert_symbol(vault_dir, lcsc_id, &sym_block) {
+            tracing::warn!("Symbol write failed for {vault_dir}: {e}");
+        }
+        if let Err(e) = LibraryVault::write_footprint(vault_dir, lcsc_id, &mod_content) {
+            tracing::warn!("Footprint write failed for {vault_dir}: {e}");
+        }
+        if let Err(e) = LibraryVault::upsert_vault_entry(vault_dir, &vault_entry) {
+            tracing::warn!("DB write failed for {vault_dir}: {e}");
+        }
+    }
+
+    // Return paths from the primary (first) vault
+    let primary = &vault_dirs[0];
+    let base = std::path::Path::new(primary);
     let sym_path = base.join("library").join("KiMaster.kicad_sym")
         .to_string_lossy().into_owned();
-    let mod_path = base.join("library").join("KiMaster.pretty").join(format!("{lcsc_id}.kicad_mod"))
+    let mod_path = base.join("library").join("KiMaster.pretty")
+        .join(format!("{lcsc_id}.kicad_mod"))
         .to_string_lossy().into_owned();
 
     Ok(AddToVaultResult {
@@ -189,4 +191,13 @@ pub async fn add_to_vault(
         mod_path,
         message: format!("Component {} added to vault successfully.", lcsc_id),
     })
+}
+
+/// Convenience wrapper: add to a single vault directory.
+pub async fn add_to_vault(
+    client:       &Client,
+    kimaster_dir: &str,
+    lcsc_id:      &str,
+) -> anyhow::Result<AddToVaultResult> {
+    add_to_vaults(client, &[kimaster_dir.to_string()], lcsc_id).await
 }

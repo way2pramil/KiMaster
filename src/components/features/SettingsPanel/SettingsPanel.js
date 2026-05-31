@@ -460,21 +460,24 @@ export class SettingsPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this._vaultDir = '';
+    this._globalVaultDir  = '';
+    this._projectVaultDir = null;
     this._renderNav();
     this._renderContent(this._activeId);
-    // Load current vault dir from backend
-    this._loadVaultDir();
+    this._loadVaultDirs();
   }
 
-  async _loadVaultDir() {
+  async _loadVaultDirs() {
     try {
       const r = await invoke(GET_VAULT_DIR);
-      this._vaultDir = r.path || '';
-      const el = this.shadowRoot.getElementById('vault-dir-input');
-      if (el) el.value = this._vaultDir;
+      this._globalVaultDir  = r.global_vault  || '';
+      this._projectVaultDir = r.project_vault || null;
+      const g = this.shadowRoot.getElementById('vault-global-input');
+      const p = this.shadowRoot.getElementById('vault-project-input');
+      if (g) g.value = this._globalVaultDir;
+      if (p) p.value = this._projectVaultDir || '(no project open)';
     } catch (err) {
-      Logger.warn('Settings', 'Could not load vault dir', err);
+      Logger.warn('Settings', 'Could not load vault dirs', err);
     }
   }
 
@@ -551,15 +554,22 @@ export class SettingsPanel extends HTMLElement {
 
         <div class="group">
           <div class="group-title">Component Library</div>
-          ${this._row('Vault directory', 'Global component vault location. KiCad symbols and footprints are stored here.', `
-            <div class="path-row">
-              <input class="km-input" type="text" id="vault-dir-input" readonly
-                     placeholder="Loading…" value="${esc(this._vaultDir || '')}">
+          ${this._row('Global vault', 'Shared across all projects. Default: Documents/KiMaster Library.', `
+            <div style="display:flex;gap:6px;align-items:center;width:260px;">
+              <input class="km-input" type="text" id="vault-global-input" readonly
+                     placeholder="Loading…" value="${esc(this._globalVaultDir || '')}"
+                     style="flex:1;min-width:0;">
+              <km-button variant="secondary" size="sm" id="btn-change-vault-dir">Browse…</km-button>
             </div>
           `, true)}
-          ${this._row('Change location', 'Move or set a custom vault directory. Existing components stay in the old location.', `
-            <km-button variant="secondary" size="sm" id="btn-change-vault-dir">Browse…</km-button>
-          `)}
+          ${this._row('Project vault', 'Auto-created inside the open project\'s .kimaster folder. Read-only.', `
+            <div style="width:260px;">
+              <input class="km-input" type="text" id="vault-project-input" readonly
+                     placeholder="(no project open)"
+                     value="${esc(this._projectVaultDir || '')}"
+                     style="opacity:${this._projectVaultDir ? '1' : '0.45'};">
+            </div>
+          `, true)}
         </div>
 
       </div>
@@ -1001,19 +1011,19 @@ export class SettingsPanel extends HTMLElement {
       }
     });
 
-    // Change vault directory
+    // Change global vault directory
     root.getElementById('btn-change-vault-dir')?.addEventListener('km-click', async () => {
       try {
         const r = await invoke(SET_VAULT_DIR, {});
-        this._vaultDir = r.path;
-        const input = root.getElementById('vault-dir-input');
-        if (input) input.value = r.path;
+        this._globalVaultDir = r.global_vault || '';
+        const input = root.getElementById('vault-global-input');
+        if (input) input.value = this._globalVaultDir;
         this.dispatchEvent(new CustomEvent('km-notify', {
           bubbles: true, composed: true,
-          detail: { type: 'success', title: 'Vault Directory', message: `Set to: ${r.path}` },
+          detail: { type: 'success', title: 'Global Vault', message: `Set to: ${this._globalVaultDir}` },
         }));
       } catch (err) {
-        if (String(err).includes('No folder selected')) return; // user cancelled
+        if (String(err).includes('No folder selected')) return;
         Logger.error('Settings', 'setVaultDir failed', err);
         this.dispatchEvent(new CustomEvent('km-notify', {
           bubbles: true, composed: true,

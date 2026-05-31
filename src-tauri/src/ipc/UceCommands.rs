@@ -17,15 +17,30 @@ use crate::modules::uce::{
     },
 };
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Get the global vault directory from AppState. Works without an open project.
+/// Get the global vault directory from AppState. Fails if not initialised.
 fn require_vault_dir(state: &State<'_, KiMasterState>) -> Result<String, String> {
     let inner = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
     inner
         .global_vault_dir
         .clone()
         .ok_or_else(|| "Global vault directory not initialised".to_string())
+}
+
+/// Collect all active vault directories: global vault + project vault (if open).
+/// Deduplicates so the same dir isn't written twice.
+fn collect_vault_dirs(state: &State<'_, KiMasterState>) -> Result<Vec<String>, String> {
+    let inner = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
+    let global = inner.global_vault_dir.clone()
+        .ok_or_else(|| "Global vault directory not initialised".to_string())?;
+    let mut dirs = vec![global.clone()];
+    if let Some(proj) = &inner.project_vault_dir {
+        if proj != &global {
+            dirs.push(proj.clone());
+        }
+    }
+    Ok(dirs)
 }
 
 /// Build a one-shot HTTP client (cheap, shares no connection pool).
@@ -74,12 +89,10 @@ pub async fn cmd_uce_search(
         .await
         .map_err(|e| format!("Search failed: {e}"))?;
 
-    // Check vault membership for each result (best-effort; no project = all false)
-    let kimaster_dir = require_vault_dir(&state).ok();
+    // Check vault membership across all active vaults (best-effort)
+    let vault_dirs = collect_vault_dirs(&state).unwrap_or_default();
     let items = resp.results.into_iter().map(|r| {
-        let in_vault = kimaster_dir.as_deref()
-            .map(|d| is_in_vault(d, &r.lcsc))
-            .unwrap_or(false);
+        let in_vault = vault_dirs.iter().any(|d| is_in_vault(d, &r.lcsc));
         UceSearchItem {
             lcsc:         r.lcsc,
             name:         r.name,
@@ -150,10 +163,8 @@ pub async fn cmd_uce_preview_component(
         &raw.fp_shapes, raw.fp_head_x, raw.fp_head_y, raw.fp_is_smd,
     );
 
-    let kimaster_dir = require_vault_dir(&state).ok();
-    let in_vault = kimaster_dir.as_deref()
-        .map(|d| is_in_vault(d, &resolved_id))
-        .unwrap_or(false);
+    let vault_dirs = collect_vault_dirs(&state).unwrap_or_default();
+    let in_vault = vault_dirs.iter().any(|d| is_in_vault(d, &resolved_id));
 
     Ok(UceComponentPreview {
         lcsc_id:       raw.lcsc_id,
@@ -181,28 +192,46 @@ pub async fn cmd_uce_add_to_vault(
     state:   State<'_, KiMasterState>,
     lcsc_id: String,
 ) -> Result<AddToVaultResult, String> {
-    let kimaster_dir = require_vault_dir(&state)?;
-    let client       = make_client()?;
+    let vault_dirs = collect_vault_dirs(&state)?;
+    let client     = make_client()?;
 
     // Resolve MPN → LCSC if needed
     let resolved_id = client.resolve_to_lcsc(&lcsc_id)
         .await
         .map_err(|e| format!("Resolution failed: {e}"))?;
 
-    uce::add_to_vault(&client, &kimaster_dir, &resolved_id)
+    // Write to global vault + project vault (if open) in one fetch
+    uce::add_to_vaults(&client, &vault_dirs, &resolved_id)
         .await
         .map_err(|e| format!("Add to vault failed: {e}"))
 }
 
 // ── Vault contents ────────────────────────────────────────────────────────────
 
-/// List all components currently in the project vault.
+/// List all components across all active vaults (global + project), deduplicated by LCSC ID.
+/// Components present in the project vault are returned first.
 #[tauri::command]
 pub async fn cmd_uce_get_vault(
     state: State<'_, KiMasterState>,
 ) -> Result<Vec<VaultEntry>, String> {
-    let kimaster_dir = require_vault_dir(&state)?;
-    get_vault_contents(&kimaster_dir).map_err(|e| e.to_string())
+    let vault_dirs = collect_vault_dirs(&state).unwrap_or_else(|_| vec![]);
+    let mut seen = std::collections::HashSet::new();
+    let mut combined: Vec<VaultEntry> = Vec::new();
+
+    // Project vault (last in dirs, if different from global) goes first — more relevant
+    for dir in vault_dirs.iter().rev() {
+        match get_vault_contents(dir) {
+            Ok(entries) => {
+                for e in entries {
+                    if seen.insert(e.lcsc_id.clone()) {
+                        combined.push(e);
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("get_vault_contents({dir}) failed: {e}"),
+        }
+    }
+    Ok(combined)
 }
 
 /// Remove a component from the vault (deletes .kicad_mod + removes from .kicad_sym + DB).
@@ -212,48 +241,57 @@ pub async fn cmd_uce_remove_from_vault(
     state:   State<'_, KiMasterState>,
     lcsc_id: String,
 ) -> Result<(), String> {
-    let kimaster_dir = require_vault_dir(&state)?;
-    remove_from_vault(&kimaster_dir, &lcsc_id)
-        .map_err(|e| format!("Remove failed: {e}"))
+    let vault_dirs = collect_vault_dirs(&state).unwrap_or_else(|_| vec![]);
+    for dir in &vault_dirs {
+        if let Err(e) = remove_from_vault(dir, &lcsc_id) {
+            tracing::warn!("Remove from vault {dir} failed: {e}");
+        }
+    }
+    Ok(())
 }
 
 // ── Vault directory management ───────────────────────────────────────────────
 
+/// Both vault paths returned together for UI display.
 #[derive(Serialize, Deserialize)]
-pub struct VaultDirResponse {
-    pub path: String,
+pub struct VaultDirsResponse {
+    /// User-configured global vault (persisted across projects).
+    pub global_vault:  String,
+    /// Project-local vault (`.kimaster/` of the open project), if any.
+    pub project_vault: Option<String>,
 }
 
-/// Return the current global vault directory path.
+/// Return current global and project vault paths.
 #[tauri::command]
 pub async fn cmd_get_vault_dir(
     state: State<'_, KiMasterState>,
-) -> Result<VaultDirResponse, String> {
-    let path = require_vault_dir(&state)?;
-    Ok(VaultDirResponse { path })
+) -> Result<VaultDirsResponse, String> {
+    let inner = state.0.lock().map_err(|e| format!("State lock: {e}"))?;
+    let global_vault = inner.global_vault_dir.clone()
+        .ok_or_else(|| "Global vault not initialised".to_string())?;
+    let project_vault = inner.project_vault_dir.clone();
+    Ok(VaultDirsResponse { global_vault, project_vault })
 }
 
-/// Open a native folder picker and set the chosen directory as the new vault.
-/// Provisions the vault structure inside the chosen directory.
-/// Persists the choice to `<app_data>/vault_config.json`.
+/// Set the global vault directory.
+/// Opens a native folder picker if `vault_path` is omitted or empty.
+/// Provisions the vault structure and persists the choice.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn cmd_set_vault_dir(
-    app:      AppHandle,
-    state:    State<'_, KiMasterState>,
+    app:        AppHandle,
+    state:      State<'_, KiMasterState>,
     vault_path: Option<String>,
-) -> Result<VaultDirResponse, String> {
-    // If no path provided, open native folder picker
+) -> Result<VaultDirsResponse, String> {
     let chosen = match vault_path {
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => {
             let picked = std::thread::spawn(|| {
                 rfd::FileDialog::new()
-                    .set_title("Choose Component Library Directory")
+                    .set_title("Choose Global Component Library Folder")
                     .pick_folder()
             })
             .join()
             .map_err(|_| "Folder picker thread panicked".to_string())?;
-
             match picked {
                 Some(p) => p,
                 None => return Err("No folder selected".into()),
@@ -261,36 +299,27 @@ pub async fn cmd_set_vault_dir(
         }
     };
 
-    // Reject project-local .kimaster dirs
-    let dir_name = chosen.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if dir_name == ".kimaster" {
-        return Err("Cannot use a project .kimaster directory as the global vault. Choose a different folder.".into());
-    }
-
-    // Validate + create dir
     if let Err(e) = std::fs::create_dir_all(&chosen) {
         return Err(format!("Cannot create directory: {e}"));
     }
 
     let vault_str = chosen.to_string_lossy().into_owned();
 
-    // Provision all vault structures (library/, stackups/, templates/, blocks/, SQLite)
     uce::VaultManager::provision_all_vaults(&vault_str)
         .map_err(|e| format!("Cannot provision vault: {e}"))?;
 
-    // Update runtime state
-    {
+    let project_vault = {
         let mut inner = state.0.lock().map_err(|e| e.to_string())?;
         inner.global_vault_dir = Some(vault_str.clone());
-    }
+        inner.project_vault_dir.clone()
+    };
 
-    // Persist to config file
     if let Err(e) = persist_vault_path(&app, &vault_str) {
         tracing::warn!("Could not persist vault path: {e}");
     }
 
-    tracing::info!("Vault directory changed to: {vault_str}");
-    Ok(VaultDirResponse { path: vault_str })
+    tracing::info!("Global vault changed to: {vault_str}");
+    Ok(VaultDirsResponse { global_vault: vault_str, project_vault })
 }
 
 // ── Persistence helpers ──────────────────────────────────────────────────────

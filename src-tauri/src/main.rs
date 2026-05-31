@@ -116,25 +116,25 @@ fn main() {
             use tauri::Manager;
 
             // Resolve the global vault directory.
-            // Priority: persisted custom path → default (<app_data>/vault/)
-            // Reject persisted paths that look like project-local .kimaster dirs.
-            let default_vault = || {
-                let app_data = app.path().app_data_dir()
-                    .expect("Cannot resolve app_data_dir");
-                app_data.join(AppConfig::VAULT_DIR_NAME)
+            // Priority: persisted custom path → Documents/KiMaster Library → <app_data>/vault/
+            let default_vault = || -> std::path::PathBuf {
+                // Windows: %USERPROFILE%\Documents\KiMaster Library
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(profile) = std::env::var("USERPROFILE") {
+                        let docs = std::path::PathBuf::from(profile).join("Documents");
+                        if docs.exists() {
+                            return docs.join(AppConfig::GLOBAL_VAULT_DEFAULT_NAME);
+                        }
+                    }
+                }
+                // Fallback: <app_data>/vault/
+                app.path().app_data_dir()
+                    .expect("Cannot resolve app_data_dir")
+                    .join(AppConfig::VAULT_DIR_NAME)
             };
             let vault_dir = ipc::UceCommands::load_persisted_vault_path(&app.handle())
                 .map(std::path::PathBuf::from)
-                .filter(|p| {
-                    // Reject if the saved path ends with .kimaster (project-local)
-                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name == ".kimaster" {
-                        tracing::warn!("Ignoring stale project-local vault path: {:?}", p);
-                        false
-                    } else {
-                        true
-                    }
-                })
                 .unwrap_or_else(default_vault);
 
             if let Err(e) = std::fs::create_dir_all(&vault_dir) {

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::AppState::{KiMasterState, ProjectInfo};
 use crate::modules::project::ProjectStore;
 use crate::modules::project::FileWatcher;
+use crate::modules::uce::LibraryVault;
 
 // ── Return types ──────────────────────────────────────────────────────────────
 
@@ -114,11 +115,18 @@ pub fn cmd_open_project(
         let _ = app_clone.emit("project:file_changed", changed.to_string_lossy().as_ref());
     });
 
+    // Provision project-local component vault inside .kimaster/
+    let km_str = km_dir.to_string_lossy().into_owned();
+    if let Err(e) = LibraryVault::provision_vault(&km_str) {
+        tracing::warn!("[ProjectCommands] Project vault provision failed: {e}");
+    }
+
     // Update AppState (drops old watcher, stopping it)
     {
         let mut guard = state.0.lock().unwrap();
-        guard.active_project = Some(project.clone());
-        guard.file_watcher   = watcher.ok();
+        guard.active_project   = Some(project.clone());
+        guard.file_watcher     = watcher.ok();
+        guard.project_vault_dir = Some(km_str);
     }
 
     let _ = app.emit("project:opened", &project);
@@ -136,8 +144,9 @@ pub fn cmd_open_project(
 #[tauri::command]
 pub fn cmd_close_project(app: AppHandle, state: State<'_, KiMasterState>) {
     let mut guard = state.0.lock().unwrap();
-    guard.active_project = None;
-    guard.file_watcher   = None; // drop → stops watcher thread
+    guard.active_project    = None;
+    guard.file_watcher      = None;
+    guard.project_vault_dir = None;
     drop(guard);
     let _ = app.emit("project:closed", ());
 }

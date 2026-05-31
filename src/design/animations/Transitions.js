@@ -18,12 +18,22 @@ const supportsViewTransitions = () =>
  */
 export async function routeTransition(container, updateFn) {
   if (supportsViewTransitions()) {
-    await document.startViewTransition(updateFn).finished;
-    return;
+    try {
+      await document.startViewTransition(updateFn).finished;
+      return;
+    } catch {
+      // View Transition aborted (rapid navigation) — fall through to direct update
+      await updateFn();
+      return;
+    }
   }
-  await animate(container, { opacity: [1, 0], y: [0, -8] }, { duration: 0.12, easing: 'ease-in' }).finished;
-  await updateFn();
-  await animate(container, { opacity: [0, 1], y: [8, 0] }, { duration: 0.18, easing: 'ease-out' }).finished;
+  try {
+    await animate(container, { opacity: [1, 0], y: [0, -8] }, { duration: 0.12, easing: 'ease-in' }).finished;
+    await updateFn();
+    await animate(container, { opacity: [0, 1], y: [8, 0] }, { duration: 0.18, easing: 'ease-out' }).finished;
+  } catch {
+    await updateFn();
+  }
 }
 
 /**

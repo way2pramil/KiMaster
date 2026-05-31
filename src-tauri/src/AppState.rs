@@ -42,9 +42,12 @@ pub struct KiMasterStateInner {
     pub kicad_cli_path: Option<String>,
     /// Active .kicad_pro project
     pub active_project: Option<ProjectInfo>,
-    /// Global vault directory — project-independent component storage.
-    /// Resolved at startup via Tauri's `app_data_dir()` + "vault/".
+    /// Global vault directory — user-configurable, persisted across sessions.
+    /// Default on Windows: `%USERPROFILE%\Documents\KiMaster Library`
     pub global_vault_dir: Option<String>,
+    /// Project-local vault — auto-set to `<project>/.kimaster/` when a project is open.
+    /// Cleared when the project is closed.
+    pub project_vault_dir: Option<String>,
 
     // ── Project (Phase 4A) ───────────────────────────────────────────────
     /// Recent projects list (persisted in .kimaster/db.sqlite per project).

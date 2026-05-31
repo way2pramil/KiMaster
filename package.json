@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "backup": "powershell -Command \"$d = Get-Date -Format 'yyyy-MM-dd_HHmm'; git add -A; git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m ('wip: backup snapshot ' + $d) } else { Write-Host 'Nothing new to commit' -ForegroundColor Yellow }; git push origin master; if ($LASTEXITCODE -ne 0) { Write-Host 'PUSH FAILED' -ForegroundColor Red } else { Write-Host 'Pushed to GitHub' -ForegroundColor Green }; $dest = 'D:\\Backups\\KiMaster_' + $d + '.bundle'; $null = New-Item -ItemType Directory -Path 'D:\\Backups' -Force; git bundle create $dest --branches --tags; if (Test-Path $dest) { Write-Host ('Bundle saved: ' + $dest) -ForegroundColor Green; $size = (Get-Item $dest).Length / 1MB; Write-Host ('Size: ' + [math]::Round($size,1) + ' MB') -ForegroundColor Cyan; Get-ChildItem 'D:\\Backups' -Filter 'KiMaster_*.bundle' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 25 | Remove-Item -Force } else { Write-Host 'BUNDLE CREATION FAILED' -ForegroundColor Red }\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

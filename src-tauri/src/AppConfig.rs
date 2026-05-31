@@ -8,9 +8,12 @@ pub const BRIDGE_WS_CONNECT_TIMEOUT_MS: u64 = 3_000;
 
 pub const KIMASTER_DIR: &str = ".kimaster";
 
-/// Sub-directory inside Tauri's `app_data_dir` for the global component vault.
-/// Resolved at startup → `%APPDATA%/com.kimaster.app/vault/` (Windows).
+/// Sub-directory inside Tauri's `app_data_dir` for the global component vault fallback.
 pub const VAULT_DIR_NAME: &str = "vault";
+
+/// Default global vault folder name inside the user's Documents directory.
+/// Windows default: `%USERPROFILE%\Documents\KiMaster Library`
+pub const GLOBAL_VAULT_DEFAULT_NAME: &str = "KiMaster Library";
 pub const DB_FILENAME: &str = "db.sqlite";
 pub const EMBEDDINGS_DB_FILENAME: &str = "embeddings.sqlite";
 pub const CRDT_FILENAME: &str = "crdt_state.bin";

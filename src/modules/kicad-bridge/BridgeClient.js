@@ -160,6 +160,21 @@ function _stopAutoConnect() {
 // ── Connect / Disconnect ──────────────────────────────────────────────────────
 
 /**
+ * Show the connection gate modal, then connect if user approves.
+ * This is the entry point for user-initiated connections.
+ * @param {number} [port=40001]
+ */
+export async function showConnectGate(port = 40001) {
+  const { BridgeConnectGate } = await import('../../components/features/Bridge/index.js');
+  const approved = await BridgeConnectGate.show();
+  if (!approved) {
+    Logger.debug('Bridge', 'Connection cancelled by user');
+    return;
+  }
+  return connectBridge(port);
+}
+
+/**
  * Connect to the KiCad bridge plugin WS server.
  * @param {number} [port=40001]
  */
