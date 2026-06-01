@@ -9,7 +9,8 @@ use crate::AppConfig;
 use crate::AppState::KiMasterState;
 use crate::modules::bridge::{
     spawn_bridge_task, BridgeCmd,
-    install_bridge_plugin, plugin_install_dir,
+    install_bridge_plugin, reinstall_bridge_plugin, plugin_install_dir,
+    scan_bridge_instances, KiCadInstance,
 };
 
 // ── Response types ──────────────────────────────────────────────────────────
@@ -201,20 +202,14 @@ pub async fn cmd_bridge_regenerate_zones(
     filter_net:   Option<String>,
     check_fill:   Option<bool>,
 ) -> Result<(), String> {
-    let inner = state.0.lock().map_err(|e| e.to_string())?;
-    match &inner.bridge_cmd_tx {
-        Some(tx) => tx
-            .send(BridgeCmd::Send(json!({
-                "type": "regenerate_zones",
-                "data": {
-                    "filter_layer": filter_layer.unwrap_or_default(),
-                    "filter_net":   filter_net.unwrap_or_default(),
-                    "check_fill":   check_fill.unwrap_or(true),
-                }
-            })))
-            .map_err(|_| "Bridge task has stopped".into()),
-        None => Err("Not connected to bridge".into()),
-    }
+    send_write_to_bridge(&state, json!({
+        "type": "regenerate_zones",
+        "data": {
+            "filter_layer": filter_layer.unwrap_or_default(),
+            "filter_net":   filter_net.unwrap_or_default(),
+            "check_fill":   check_fill.unwrap_or(true),
+        }
+    }))
 }
 
 /// Find and (optionally) remove vias that have no track or pad on either side.
@@ -229,19 +224,13 @@ pub async fn cmd_bridge_purge_orphan_vias(
     filter_net: Option<String>,
     dry_run:    Option<bool>,
 ) -> Result<(), String> {
-    let inner = state.0.lock().map_err(|e| e.to_string())?;
-    match &inner.bridge_cmd_tx {
-        Some(tx) => tx
-            .send(BridgeCmd::Send(json!({
-                "type": "purge_orphan_vias",
-                "data": {
-                    "filter_net": filter_net.unwrap_or_default(),
-                    "dry_run":    dry_run.unwrap_or(true),
-                }
-            })))
-            .map_err(|_| "Bridge task has stopped".into()),
-        None => Err("Not connected to bridge".into()),
-    }
+    send_write_to_bridge(&state, json!({
+        "type": "purge_orphan_vias",
+        "data": {
+            "filter_net": filter_net.unwrap_or_default(),
+            "dry_run":    dry_run.unwrap_or(true),
+        }
+    }))
 }
 
 /// Ask the plugin to compute and broadcast net analytics for `net`.
@@ -281,7 +270,33 @@ pub async fn cmd_bridge_clear_highlight(
 // Arg names must match AppCommands.js JSDoc exactly (Rule 3).
 // All ops save the board and trigger board_changed → fresh state pushed to UI.
 
-/// Helper — acquire the bridge sender without holding MutexGuard across await.
+/// **Project-locked** write command helper.
+///
+/// Stamps every write command with `board_check = <locked_board_path>` before
+/// sending it to the KiCad bridge plugin.  The plugin's `_check_board()` guard
+/// verifies the path matches the board that is currently open — if not, it
+/// rejects the command and returns an error `op_result`.
+///
+/// This is the Rust-side fence.  The Python-side fence is `_check_board()`.
+/// Both must pass for a write to execute.
+fn send_write_to_bridge(state: &State<'_, KiMasterState>, mut payload: Value) -> Result<(), String> {
+    let inner = state.0.lock().map_err(|e| e.to_string())?;
+
+    // Require an active project lock — writes without one are always rejected
+    let board_path = inner.locked_board_path.as_deref()
+        .ok_or_else(|| "No active project lock — connect the bridge and open a board first".to_string())?;
+
+    // Stamp the payload so the Python plugin can verify it
+    payload["board_check"] = serde_json::Value::String(board_path.to_string());
+
+    match &inner.bridge_cmd_tx {
+        Some(tx) => tx.send(BridgeCmd::Send(payload))
+            .map_err(|_| "Bridge task has stopped".into()),
+        None => Err("Bridge not connected".into()),
+    }
+}
+
+/// Read-only / non-destructive helper (no board_check needed).
 fn send_to_bridge(state: &State<'_, KiMasterState>, payload: Value) -> Result<(), String> {
     let inner = state.0.lock().map_err(|e| e.to_string())?;
     match &inner.bridge_cmd_tx {
@@ -300,7 +315,8 @@ pub fn cmd_bridge_move_component(
     x_mm:      f64,
     y_mm:      f64,
 ) -> Result<(), String> {
-    send_to_bridge(&state, json!({
+    // ← uses send_write_to_bridge: board_check is stamped automatically
+    send_write_to_bridge(&state, json!({
         "type": "move_component",
         "data": { "ref": reference, "x_mm": x_mm, "y_mm": y_mm }
     }))
@@ -314,7 +330,7 @@ pub fn cmd_bridge_rotate_component(
     reference: String,
     angle_deg: f64,
 ) -> Result<(), String> {
-    send_to_bridge(&state, json!({
+    send_write_to_bridge(&state, json!({
         "type": "rotate_component",
         "data": { "ref": reference, "angle_deg": angle_deg }
     }))
@@ -328,7 +344,7 @@ pub fn cmd_bridge_set_locked(
     reference: String,
     locked:    bool,
 ) -> Result<(), String> {
-    send_to_bridge(&state, json!({
+    send_write_to_bridge(&state, json!({
         "type": "set_locked",
         "data": { "ref": reference, "locked": locked }
     }))
@@ -342,7 +358,7 @@ pub fn cmd_bridge_set_dnp(
     reference: String,
     dnp:       bool,
 ) -> Result<(), String> {
-    send_to_bridge(&state, json!({
+    send_write_to_bridge(&state, json!({
         "type": "set_dnp",
         "data": { "ref": reference, "dnp": dnp }
     }))
@@ -412,6 +428,31 @@ pub async fn cmd_install_bridge_plugin(
     }
 }
 
+/// Check whether the plugin is installed and return its path.
+/// Checks for the presence of `__init__.py` inside the expected plugin directory.
+#[derive(Serialize)]
+pub struct PluginStatusResponse {
+    /// True if the plugin directory and `__init__.py` both exist.
+    pub installed:    bool,
+    /// Absolute path to the plugin directory (may or may not exist yet).
+    pub install_path: String,
+}
+
+#[tauri::command]
+pub async fn cmd_check_plugin_installed(
+    app: AppHandle,
+) -> Result<PluginStatusResponse, String> {
+    use tauri::Manager;
+    let home_dir = app.path().home_dir()
+        .map_err(|e| format!("Cannot resolve home dir: {e}"))?;
+    let dir = plugin_install_dir(&home_dir);
+    let installed = dir.join("__init__.py").exists();
+    Ok(PluginStatusResponse {
+        installed,
+        install_path: dir.to_string_lossy().into_owned(),
+    })
+}
+
 /// Get the expected plugin installation path (for display in UI).
 #[tauri::command]
 pub async fn cmd_get_plugin_install_path(
@@ -421,4 +462,71 @@ pub async fn cmd_get_plugin_install_path(
     let home_dir = app.path().home_dir()
         .map_err(|e| format!("Cannot resolve home dir: {e}"))?;
     Ok(plugin_install_dir(&home_dir).to_string_lossy().into_owned())
+}
+
+/// **Clean** reinstall: wipe old plugin dir, copy fresh files, clear Python bytecode caches.
+/// Use this when the plugin misbehaves or after a KiMaster update.
+#[tauri::command]
+pub async fn cmd_reinstall_bridge_plugin(
+    app: AppHandle,
+) -> Result<BridgeInstallResponse, String> {
+    use tauri::Manager;
+    use std::path::PathBuf;
+
+    let plugin_src: PathBuf = if cfg!(debug_assertions) {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest_dir.parent().unwrap_or(manifest_dir)
+            .join("bridge").join("kimaster_plugin")
+    } else {
+        let resource_dir = app.path().resource_dir()
+            .map_err(|e| format!("Cannot resolve resource dir: {e}"))?;
+        resource_dir.join("bridge").join("kimaster_plugin")
+    };
+
+    if !plugin_src.exists() {
+        return Ok(BridgeInstallResponse {
+            success: false,
+            install_path: None,
+            message: format!(
+                "Plugin source not found at '{}'. Ensure your KiMaster installation is complete.",
+                plugin_src.display()
+            ),
+        });
+    }
+
+    let home_dir = app.path().home_dir()
+        .map_err(|e| format!("Cannot resolve home dir: {e}"))?;
+
+    match reinstall_bridge_plugin(&plugin_src, &home_dir) {
+        Ok(dest) => Ok(BridgeInstallResponse {
+            success: true,
+            install_path: Some(dest.to_string_lossy().into_owned()),
+            message: format!(
+                "Plugin cleanly reinstalled to '{}'. Old files and Python caches were removed. \
+                 Restart KiCad and re-activate from Tools → External Plugins → KiMaster Bridge.",
+                dest.display()
+            ),
+        }),
+        Err(e) => Ok(BridgeInstallResponse {
+            success: false,
+            install_path: None,
+            message: e,
+        }),
+    }
+}
+
+/// Scan ports 40001–40010 for active KiMaster bridge WebSocket servers.
+///
+/// Returns one entry per responding port. A normal setup returns one entry.
+/// Multiple entries mean multiple KiCad instances are running the plugin
+/// simultaneously — the user must choose which one KiMaster connects to.
+#[tauri::command]
+pub async fn cmd_scan_kicad_instances() -> Result<Vec<KiCadInstance>, String> {
+    let instances = scan_bridge_instances(AppConfig::BRIDGE_WS_PORT, 10).await;
+    tracing::info!("Instance scan: found {} bridge(s) in port range {}-{}",
+        instances.len(),
+        AppConfig::BRIDGE_WS_PORT,
+        AppConfig::BRIDGE_WS_PORT + 9,
+    );
+    Ok(instances)
 }

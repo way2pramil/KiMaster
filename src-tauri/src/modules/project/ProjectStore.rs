@@ -33,15 +33,26 @@ pub struct RecentProject {
 
 // ── Provisioning ──────────────────────────────────────────────────────────────
 
-/// Create the `.kimaster/` directory next to the `.kicad_pro` file if it does
-/// not exist, and return its absolute path.
+/// Create the `.kimaster/` directory next to the `.kicad_pro` (or `.kicad_pcb`)
+/// file if it does not exist.  Also provisions required sub-directories:
+///   - `assets/`   — images and attachments referenced by notes/markdown
+/// Returns the absolute path of the `.kimaster/` dir.
 pub fn provision_kimaster_dir(pro_path: &Path) -> Result<PathBuf> {
     let parent = pro_path
         .parent()
         .with_context(|| format!("No parent directory for {:?}", pro_path))?;
-    let km_dir = parent.join(KIMASTER_DIR);
+    provision_kimaster_in(parent)
+}
+
+/// Provision `.kimaster/` inside an arbitrary project directory.
+/// Called both from `provision_kimaster_dir` and from the bridge auto-detect path.
+pub fn provision_kimaster_in(project_dir: &Path) -> Result<PathBuf> {
+    let km_dir = project_dir.join(KIMASTER_DIR);
     std::fs::create_dir_all(&km_dir)
         .with_context(|| format!("Cannot create {:?}", km_dir))?;
+    // assets/ — for notes images, markdown attachments
+    std::fs::create_dir_all(km_dir.join(crate::AppConfig::KIMASTER_ASSETS_DIR))
+        .with_context(|| format!("Cannot create assets/ inside {:?}", km_dir))?;
     Ok(km_dir)
 }
 

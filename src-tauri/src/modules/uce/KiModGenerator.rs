@@ -14,10 +14,15 @@ const GENERATOR:   &str = "kimaster";
 const LIB_NAME:    &str = "KiMaster";
 
 /// Generate the full `.kicad_mod` text for a footprint.
-/// `model_3d_path` is the filesystem path to the STEP file (used in the `(model ...)` block).
-/// Pass `None` if no 3D model is available.
-pub fn generate_footprint(info: &EeSymbolInfo, fp: &EeFootprint, model_3d_path: Option<&str>) -> String {
-    let name = &info.lcsc_id;
+/// `fp_stem` is the stem used for both the footprint name and the `(model ...)` block.
+/// Pass `None` for `model_3d_path` if no 3D model is available.
+pub fn generate_footprint(
+    info:          &EeSymbolInfo,
+    fp:            &EeFootprint,
+    fp_stem:       &str,
+    model_3d_path: Option<&str>,
+) -> String {
+    let name = fp_stem;
     let mut s = String::with_capacity(16384);
 
     // ── Module header ────────────────────────────────────────────────────────
@@ -31,6 +36,18 @@ pub fn generate_footprint(info: &EeSymbolInfo, fp: &EeFootprint, model_3d_path: 
     if !info.description.is_empty() {
         let esc = info.description.replace('"', "\\\"");
         s.push_str(&format!("  (descr \"{esc}\")\n"));
+    }
+
+    // Keywords for footprint chooser search
+    {
+        let mut kw = Vec::new();
+        if !info.lcsc_id.is_empty()      { kw.push(info.lcsc_id.clone()); }
+        if !info.manufacturer.is_empty() { kw.push(info.manufacturer.clone()); }
+        if !info.mpn.is_empty()          { kw.push(info.mpn.clone()); }
+        if !kw.is_empty() {
+            let tags = kw.join(" ").replace('"', "\\\"");
+            s.push_str(&format!("  (tags \"{tags}\")\n"));
+        }
     }
 
     if !fp.fp_type.is_empty() {
@@ -47,45 +64,62 @@ pub fn generate_footprint(info: &EeSymbolInfo, fp: &EeFootprint, model_3d_path: 
         (lo, hi)
     };
 
-    // Reference text on F.SilkS (above pads)
+    // Reference designator on F.SilkS — centred above the pads
     s.push_str(&format!(
         "  (fp_text reference \"REF**\" (at 0 {:.3})\n\
          \x20   (layer \"F.SilkS\")\n\
          \x20   (effects (font (size 1 1) (thickness 0.15)))\n\
          \x20 )\n",
-        y_low - 4.0,
+        y_low - 1.27,
     ));
 
-    // Value text on F.Fab (below pads)
+    // Value (package name) on F.Fab — centred below the pads
     let name_esc = name.replace('"', "\\\"");
     s.push_str(&format!(
         "  (fp_text value \"{name_esc}\" (at 0 {:.3})\n\
          \x20   (layer \"F.Fab\")\n\
          \x20   (effects (font (size 1 1) (thickness 0.15)))\n\
          \x20 )\n",
-        y_high + 4.0,
+        y_high + 1.27,
     ));
 
-    // User %R fab ref
+    // Courtyard %R — invisible placeholder for KiCad
     s.push_str(
         "  (fp_text user \"%R\" (at 0 0)\n\
          \x20   (layer \"F.Fab\")\n\
+         \x20   (hide yes)\n\
          \x20   (effects (font (size 1 1) (thickness 0.15)))\n\
          \x20 )\n"
     );
 
-    // ── Custom properties ────────────────────────────────────────────────────
-    if !info.lcsc_id.is_empty() {
-        s.push_str(&format!("  (property \"LCSC Part\" \"{}\")\n", info.lcsc_id));
-    }
-    if !info.manufacturer.is_empty() {
-        let esc = info.manufacturer.replace('"', "\\\"");
-        s.push_str(&format!("  (property \"Manufacturer\" \"{esc}\")\n"));
-    }
-    if !info.mpn.is_empty() {
-        let esc = info.mpn.replace('"', "\\\"");
-        s.push_str(&format!("  (property \"MPN\" \"{esc}\")\n"));
-    }
+    // ── Custom properties ─────────────────────────────────────────────────────
+    // Positioned below the value text, equally spaced, left-justified, hidden.
+    // KiCad shows these in "Footprint Properties → Fields" and the footprint
+    // description/keywords appear in the Footprint Properties "Metadata" section.
+    let mut prop_y = y_high + 5.0_f64;  // start below the value text
+    const PROP_STEP:   f64 = 1.27;      // 50 mil vertical gap
+    const PROP_FONT:   f64 = 1.27;
+
+    let mut fp_prop = |key: &str, val: &str| {
+        if val.is_empty() { return String::new(); }
+        let v = val.replace('"', "\\\"");
+        let out = format!(
+            "  (property \"{key}\" \"{v}\"\n\
+             \x20   (at 0 {prop_y:.4})\n\
+             \x20   (layer \"F.Fab\")\n\
+             \x20   (hide yes)\n\
+             \x20   (effects (font (size {PROP_FONT} {PROP_FONT})) (justify left))\n\
+             \x20 )\n"
+        );
+        prop_y += PROP_STEP;
+        out
+    };
+
+    s.push_str(&fp_prop("LCSC Part #",  &info.lcsc_id));
+    s.push_str(&fp_prop("Datasheet",    &info.datasheet));
+    s.push_str(&fp_prop("Description",  &info.description));
+    s.push_str(&fp_prop("Manufacturer", &info.manufacturer));
+    s.push_str(&fp_prop("MPN",          &info.mpn));
 
     // ── Tracks / lines ───────────────────────────────────────────────────────
     for t in &fp.tracks {

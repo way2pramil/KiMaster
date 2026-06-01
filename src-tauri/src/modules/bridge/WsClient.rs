@@ -28,6 +28,8 @@ use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::AppState::KiMasterState;
+use crate::modules::project::ProjectStore;
+use crate::modules::uce::LibraryVault;
 
 // ── Command enum ────────────────────────────────────────────────────────────
 
@@ -215,7 +217,10 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
     match msg_type {
         "hello_ack" => {
             let kicad_version  = msg["kicad_version"].as_str().map(String::from);
-            let board_name     = msg["board"].as_str().map(String::from);
+            // "board" / "pcb_path" both carry the full path to the .kicad_pcb file
+            let board_name     = msg["pcb_path"].as_str()
+                .or_else(|| msg["board"].as_str())
+                .map(String::from);
             let plugin_version = msg["version"].as_str().map(String::from);
 
             tracing::info!(
@@ -223,7 +228,22 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
                 kicad_version, board_name, plugin_version
             );
 
+            // ── Set project lock ─────────────────────────────────────────────
+            // This is the SINGLE point where KiMaster locks itself to one project.
+            // Every write command will carry this path as `board_check` and the
+            // Python plugin will validate it before executing anything.
+            if let Ok(mut inner) = app.state::<KiMasterState>().0.lock() {
+                inner.locked_board_path  = board_name.clone();
+                inner.locked_bridge_port = Some(port);
+            }
+            tracing::info!("Project lock set to {:?} on port {}", board_name, port);
+
             update_bridge_connected(app, kicad_version.clone(), board_name.clone());
+
+            // Auto-provision the project vault from the PCB file path
+            if let Some(ref pcb_path) = board_name {
+                auto_provision_project_vault(app, pcb_path);
+            }
 
             let _ = app.emit("bridge:connected", BridgeConnectedPayload {
                 port,
@@ -231,13 +251,36 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
                 board_name,
                 plugin_version,
             });
-
-            // Immediately request full board state
-            // (send through the WS — we use a local approach since we're inside the task)
         }
 
         "board_state" => {
             if let Some(data) = msg.get("data") {
+                // ── Board mismatch detection ─────────────────────────────────
+                // If the board reported in a state update differs from the locked
+                // path, the user has switched boards inside KiCad mid-session.
+                // Emit a warning event so the frontend can disable write ops.
+                if let Some(new_board) = data["board_name"].as_str()
+                    .or_else(|| data["file_name"].as_str())
+                {
+                    let locked = app.state::<KiMasterState>().0.lock()
+                        .ok()
+                        .and_then(|g| g.locked_board_path.clone());
+
+                    if let Some(ref expected) = locked {
+                        let norm = |s: &str| s.replace('\\', "/");
+                        if norm(new_board) != norm(expected) {
+                            tracing::warn!(
+                                "Board mismatch: locked={expected:?} but bridge reports {new_board:?}"
+                            );
+                            let _ = app.emit("bridge:project_mismatch", json!({
+                                "expected": expected,
+                                "actual":   new_board,
+                                "port":     port,
+                            }));
+                        }
+                    }
+                }
+
                 cache_board_state(app, data.clone());
                 let _ = app.emit("bridge:board_state", data);
             }
@@ -302,9 +345,62 @@ fn update_bridge_connected(
 
 fn update_bridge_disconnected(app: &AppHandle) {
     if let Ok(mut inner) = app.state::<KiMasterState>().0.lock() {
-        inner.bridge_connected = false;
-        inner.bridge_cmd_tx    = None;
+        inner.bridge_connected   = false;
+        inner.bridge_cmd_tx      = None;
+        inner.project_vault_dir  = None;
+        // Release the project lock — no project is active until the next connection
+        inner.locked_board_path  = None;
+        inner.locked_bridge_port = None;
     }
+}
+
+/// Derive the project directory from a `.kicad_pcb` path, then:
+///   1. Create `.kimaster/` + `assets/` subdirectory
+///   2. Provision the component vault inside `.kimaster/`
+///   3. Set `project_vault_dir` in AppState
+///   4. Emit `project:auto_detected` so the frontend can update the settings panel
+fn auto_provision_project_vault(app: &AppHandle, pcb_path: &str) {
+    use std::path::Path;
+
+    let pcb = Path::new(pcb_path);
+    let project_dir = match pcb.parent() {
+        Some(p) => p,
+        None => {
+            tracing::warn!("Bridge: cannot derive project dir from PCB path: {pcb_path}");
+            return;
+        }
+    };
+
+    // 1. Create .kimaster/ + assets/
+    let km_dir = match ProjectStore::provision_kimaster_in(project_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("Bridge: failed to provision .kimaster/: {e}");
+            return;
+        }
+    };
+
+    // 2. Provision component vault (library/, KiMaster.pretty/, 3dmodels/, vault.db)
+    let km_str = km_dir.to_string_lossy().into_owned();
+    if let Err(e) = LibraryVault::provision_vault(&km_str) {
+        tracing::warn!("Bridge: failed to provision project vault: {e}");
+    }
+
+    // 3. Update AppState
+    if let Ok(mut inner) = app.state::<KiMasterState>().0.lock() {
+        // Only set if not already pointing at the same project
+        if inner.project_vault_dir.as_deref() != Some(&km_str) {
+            tracing::info!("Bridge: project vault auto-set to {km_str}");
+            inner.project_vault_dir = Some(km_str.clone());
+        }
+    }
+
+    // 4. Notify frontend — settings panel and vault UI can refresh
+    let _ = app.emit("project:auto_detected", serde_json::json!({
+        "project_dir":   project_dir.to_string_lossy(),
+        "kimaster_dir":  km_str,
+        "pcb_path":      pcb_path,
+    }));
 }
 
 fn cache_board_state(app: &AppHandle, data: Value) {

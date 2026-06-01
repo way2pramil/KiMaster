@@ -98,11 +98,35 @@ export async function previewComponent(lcscId) {
 /**
  * Add component to vault (write .kicad_sym entry + .kicad_mod file).
  * @param {string} lcscId
- * @returns {Promise<{success: boolean, lcsc_id: string, sym_path: string, mod_path: string, message: string}>}
+ * @param {object|null} ppConfig  Post-processing config from Advanced panel (null = Rust defaults)
  */
-export async function addToVault(lcscId) {
+export async function addToVault(lcscId, ppConfig = null) {
+  const t0 = performance.now();
   try {
-    return await invoke(UCE_ADD_TO_VAULT, { lcsc_id: lcscId });
+    const r = await invoke(UCE_ADD_TO_VAULT, {
+      lcsc_id:   lcscId,
+      pp_config: ppConfig ?? undefined,
+    });
+    const ui_ms = Math.round(performance.now() - t0);
+    // Log timing breakdown to DevTools console
+    if (r?.timings) {
+      const t = r.timings;
+      console.groupCollapsed(
+        `%c[KiMaster UCE] ${lcscId} — ${t.total_ms}ms total`,
+        'color:#4ade80;font-weight:600'
+      );
+      console.table({
+        'Fetch (EasyEDA + JLCPCB parallel)': { ms: t.fetch_ms },
+        'Parse + post-process':              { ms: t.parse_ms },
+        '3D model download':                 { ms: t.model_ms, cached: t.model_cached },
+        'S-expression generate':             { ms: t.generate_ms },
+        'Vault write (disk)':                { ms: t.write_ms },
+        'Total (Rust)':                      { ms: t.total_ms },
+        'Total (UI round-trip)':             { ms: ui_ms },
+      });
+      console.groupEnd();
+    }
+    return r;
   } catch (err) {
     Logger.error(TAG, 'addToVault failed', err);
     return { success: false, lcsc_id: lcscId, sym_path: '', mod_path: '', message: String(err) };

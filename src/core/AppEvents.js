@@ -23,11 +23,24 @@ export const BRIDGE_ERROR        = 'bridge:error';
 export const BRIDGE_POLL_INTERVALS = 'bridge:poll_intervals';
 /** Emitted after a pcbnew write op completes: { reference, op, success } */
 export const BRIDGE_COMPONENT_MODIFIED = 'bridge:component_modified';
+/**
+ * Emitted when the project lock is established on bridge connect.
+ * { board_path: string, port: number }
+ */
+export const BRIDGE_PROJECT_LOCKED   = 'bridge:project_locked';
+/**
+ * Emitted when a board_state update reports a board_name different from the locked board.
+ * { expected: string, actual: string, port: number }
+ * Write ops must be blocked until user reconnects or confirms the switch.
+ */
+export const BRIDGE_PROJECT_MISMATCH = 'bridge:project_mismatch';
 
 // ── Project events (emitted by Rust → listened in JS) ────────────────────────
-export const PROJECT_OPENED       = 'project:opened';
-export const PROJECT_CLOSED       = 'project:closed';
-export const PROJECT_FILE_CHANGED = 'project:file_changed';
+export const PROJECT_OPENED        = 'project:opened';
+export const PROJECT_CLOSED        = 'project:closed';
+export const PROJECT_FILE_CHANGED  = 'project:file_changed';
+/** Emitted when bridge connects and project dir is auto-detected from PCB path. */
+export const PROJECT_AUTO_DETECTED = 'project:auto_detected';
 
 // ── Custom DOM events (dispatched by Web Components) ─────────────────────────
 export const KM_NAV              = 'km-nav';

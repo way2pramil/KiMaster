@@ -3,10 +3,46 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "// --- DEV SERVERS ---": "",
     "dev": "vite",
+    "dev:tauri": "tauri dev",
+    "dev:vite": "vite --host",
+    "dev:safe": "powershell -Command \"try { npm run dev } catch { Write-Host ('DEV ERROR: ' + $_.Exception.Message) -ForegroundColor Red; exit 1 }\"",
+
+    "// --- BUILD ---": "",
     "build": "vite build",
+    "build:tauri": "tauri build",
+    "build:debug": "tauri build --debug",
+    "build:check": "vite build --mode development",
+
+    "// --- RUST / CARGO ---": "",
+    "rust:check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "rust:test:verbose": "cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "rust:fmt:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+
+    "// --- CLEAN ---": "",
+    "clean": "powershell -Command \"Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue; Write-Host 'dist cleaned' -ForegroundColor Green\"",
+    "clean:cargo": "cargo clean --manifest-path src-tauri/Cargo.toml",
+    "clean:all": "powershell -Command \"Remove-Item -Recurse -Force dist,node_modules -ErrorAction SilentlyContinue; cargo clean --manifest-path src-tauri/Cargo.toml; Write-Host 'Full clean done' -ForegroundColor Green\"",
+    "fresh": "npm run clean:all && npm install",
+
+    "// --- CHECK / VALIDATE ---": "",
+    "check": "npm run rust:check && npm run build:check",
+    "check:all": "npm run rust:fmt:check && npm run rust:clippy && npm run rust:check && npm run build:check",
+    "lint": "npm run rust:clippy",
+
+    "// --- PREVIEW ---": "",
     "preview": "vite preview",
+
+    "// --- TAURI HELPERS ---": "",
     "tauri": "tauri",
+    "tauri:info": "tauri info",
+    "tauri:icon": "tauri icon",
+
+    "// --- BACKUP ---": "",
     "backup": "powershell -Command \"$d = Get-Date -Format 'yyyy-MM-dd_HHmm'; git add -A; git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m ('wip: backup snapshot ' + $d) } else { Write-Host 'Nothing new to commit' -ForegroundColor Yellow }; git push origin master; if ($LASTEXITCODE -ne 0) { Write-Host 'PUSH FAILED' -ForegroundColor Red } else { Write-Host 'Pushed to GitHub' -ForegroundColor Green }; $dest = 'D:\\Backups\\KiMaster_' + $d + '.bundle'; $null = New-Item -ItemType Directory -Path 'D:\\Backups' -Force; git bundle create $dest --branches --tags; if (Test-Path $dest) { Write-Host ('Bundle saved: ' + $dest) -ForegroundColor Green; $size = (Get-Item $dest).Length / 1MB; Write-Host ('Size: ' + [math]::Round($size,1) + ' MB') -ForegroundColor Cyan; Get-ChildItem 'D:\\Backups' -Filter 'KiMaster_*.bundle' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 25 | Remove-Item -Force } else { Write-Host 'BUNDLE CREATION FAILED' -ForegroundColor Red }\""
   },
   "dependencies": {

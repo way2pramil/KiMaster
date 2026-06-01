@@ -94,6 +94,12 @@ pub struct EdaRawComponent {
     pub lcsc_url:      String,
     /// UUID for the 3D model (may be empty).
     pub model_3d_uuid: String,
+    /// Human-readable component description from the API.
+    pub description:   String,
+    /// Price from LCSC (may be 0.0 if unavailable).
+    pub price:         f64,
+    /// Stock count from LCSC (may be 0 if unavailable).
+    pub stock:         i64,
 
     // ── Symbol data ──────────────────────────────────────────────────────
     /// Shape array from result.dataStr.shape — each entry is one tilde-delimited record.
@@ -253,6 +259,35 @@ impl LcscClient {
         Ok(resp.results[0].lcsc.clone())
     }
 
+    /// Fetch description, price, and stock from the JLCPCB search API by LCSC ID.
+    /// Returns `(description, price, stock)` — all fields may be empty/zero if not found.
+    /// Only uses the result if the returned LCSC code exactly matches `lcsc_id`.
+    /// Run this in parallel with `fetch_component` using `tokio::join!`.
+    pub async fn fetch_jlcpcb_meta(&self, lcsc_id: &str) -> (String, f64, i64) {
+        // Search with a slightly larger page to improve the chance of finding an exact match
+        match self.search(lcsc_id, 1, 5).await {
+            Ok(resp) => {
+                // Find exact LCSC ID match (case-insensitive)
+                let id_upper = lcsc_id.to_uppercase();
+                let hit = resp.results.iter().find(|r| r.lcsc.to_uppercase() == id_upper);
+                match hit {
+                    Some(r) => {
+                        let desc = if !r.description.is_empty() {
+                            r.description.clone()
+                        } else if !r.name.is_empty() {
+                            format!("{} {}", r.name, r.package).trim().to_string()
+                        } else {
+                            String::new()
+                        };
+                        (desc, r.price.unwrap_or(0.0), r.stock)
+                    }
+                    None => (String::new(), 0.0, 0),
+                }
+            }
+            _ => (String::new(), 0.0, 0),
+        }
+    }
+
     // ── Fetch component ────────────────────────────────────────────────────
 
     /// GET EasyEDA component data for the given LCSC part number.
@@ -337,6 +372,8 @@ impl LcscClient {
             .unwrap_or_default();
 
         let datasheet = Self::extract_str(result, &["datasheet"])
+            .filter(|s| !s.is_empty())
+            .or_else(|| c_para["link"].as_str().map(String::from).filter(|s| !s.is_empty()))
             .unwrap_or_default();
 
         let lcsc_dict = &result["lcsc"];
@@ -358,11 +395,33 @@ impl LcscClient {
             .or_else(|| Self::extract_str(result, &["uuid"]))
             .unwrap_or_default();
 
+        // Description: try top-level first, then c_para, then packageDetail title as fallback
+        let description = Self::extract_str(result, &["description"])
+            .filter(|s| !s.is_empty())
+            .or_else(|| c_para["description"].as_str().map(String::from).filter(|s| !s.is_empty()))
+            .or_else(|| c_para["note"].as_str().map(String::from).filter(|s| !s.is_empty()))
+            .unwrap_or_default();
+
+        // Price and stock from LCSC (two different field names used by the API)
+        let price = result["lcsc"]["price"].as_f64()
+            .or_else(|| result["szlcsc"]["price"].as_f64())
+            .or_else(|| {
+                // Sometimes stored as a string
+                result["lcsc"]["price"].as_str()
+                    .and_then(|s| s.parse::<f64>().ok())
+            })
+            .unwrap_or(0.0);
+
+        let stock = result["lcsc"]["stock"].as_i64()
+            .or_else(|| result["szlcsc"]["stock"].as_i64())
+            .or_else(|| result["lcsc"]["stockNumber"].as_i64())
+            .unwrap_or(0);
+
         // ── Multi-unit subparts ───────────────────────────────────────
         let sub_symbols = Self::extract_subparts(result);
 
         Ok(EdaRawComponent {
-            lcsc_id:    lcsc_id.to_string(),
+            lcsc_id: lcsc_id.to_string(),
             title,
             datasheet,
             package,
@@ -370,6 +429,9 @@ impl LcscClient {
             manufacturer,
             lcsc_url,
             model_3d_uuid,
+            description,
+            price,
+            stock,
             sym_shapes,
             sym_head_x,
             sym_head_y,

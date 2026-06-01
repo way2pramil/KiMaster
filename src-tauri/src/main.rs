@@ -94,7 +94,10 @@ use ipc::BridgeCommands::{
     cmd_bridge_purge_orphan_vias,
     cmd_bridge_clear_highlight,
     cmd_install_bridge_plugin,
+    cmd_reinstall_bridge_plugin,
+    cmd_check_plugin_installed,
     cmd_get_plugin_install_path,
+    cmd_scan_kicad_instances,
     // Phase 5 write commands
     cmd_bridge_move_component,
     cmd_bridge_rotate_component,
@@ -225,7 +228,10 @@ fn main() {
             cmd_bridge_purge_orphan_vias,
             cmd_bridge_clear_highlight,
             cmd_install_bridge_plugin,
+            cmd_reinstall_bridge_plugin,
+            cmd_check_plugin_installed,
             cmd_get_plugin_install_path,
+            cmd_scan_kicad_instances,
             // Phase 5 write commands
             cmd_bridge_move_component,
             cmd_bridge_rotate_component,

@@ -123,8 +123,24 @@ export const BRIDGE_SET_LOCKED         = 'cmd_bridge_set_locked';
 export const BRIDGE_SET_DNP            = 'cmd_bridge_set_dnp';
 /** No args. Returns { success, install_path, message } */
 export const INSTALL_BRIDGE_PLUGIN            = 'cmd_install_bridge_plugin';
+/**
+ * Check if the bridge plugin is currently installed.
+ * No args. Returns { installed: bool, install_path: string }
+ */
+export const CHECK_PLUGIN_INSTALLED           = 'cmd_check_plugin_installed';
+/**
+ * Clean reinstall: wipe existing plugin, copy fresh files, clear Python bytecode caches.
+ * No args. Returns { success, install_path, message }
+ */
+export const REINSTALL_BRIDGE_PLUGIN          = 'cmd_reinstall_bridge_plugin';
 /** No args. Returns path string */
 export const GET_PLUGIN_INSTALL_PATH          = 'cmd_get_plugin_install_path';
+/**
+ * Scan ports 40001–40010 for active KiMaster bridge WebSocket servers.
+ * No args. Returns KiCadInstance[] — { port, board_name?, kicad_version? }
+ * One entry = single KiCad instance. Multiple = user must pick one.
+ */
+export const SCAN_KICAD_INSTANCES             = 'cmd_scan_kicad_instances';
 
 // ── 3D Render (Phase 11 — D1) ─────────────────────────────────────────────────
 /**

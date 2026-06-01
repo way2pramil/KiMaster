@@ -80,6 +80,7 @@ pub struct EeSymbolInfo {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PinType {
     Unspecified,
+    Passive,
     Input,
     Output,
     Bidirectional,
@@ -99,6 +100,7 @@ impl PinType {
 
     pub fn to_kicad(&self) -> &'static str {
         match self {
+            Self::Passive       => "passive",
             Self::Input         => "input",
             Self::Output        => "output",
             Self::Bidirectional => "bidirectional",

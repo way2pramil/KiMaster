@@ -33,13 +33,24 @@ from typing import Optional, Set
 
 _log = logging.getLogger("kimaster.ws")
 
-KIMASTER_HOST    = "127.0.0.1"
-KIMASTER_PORT    = 40001
-KIMASTER_VERSION = "0.1.0"
+KIMASTER_HOST       = "127.0.0.1"
+KIMASTER_PORT_START = 40001          # First port to try
+KIMASTER_PORT_END   = 40010          # Last port to try (inclusive)
+KIMASTER_VERSION    = "0.1.0"
 
 
 class KiMasterWsServer:
-    """Manages the asyncio WebSocket server in a dedicated background thread."""
+    """Manages the asyncio WebSocket server in a dedicated background thread.
+
+    Port auto-discovery: tries KIMASTER_PORT_START → KIMASTER_PORT_END.
+    The first available (un-bound) port wins. This allows multiple KiCad
+    instances to each run their own bridge without port conflicts.
+
+    Project locking: every write command carries a ``board_check`` field
+    with the absolute path of the PCB file the client expects to be modifying.
+    If it does not match the currently open board, the command is rejected —
+    this prevents accidental changes to the wrong project.
+    """
 
     def __init__(self, board_exporter):
         self._exporter = board_exporter
@@ -49,6 +60,12 @@ class KiMasterWsServer:
         self._running = False
         self._selection_watcher = None
         self._board_watcher = None
+        self._port: int = KIMASTER_PORT_START  # updated to actual bound port in _serve()
+
+    @property
+    def port(self) -> int:
+        """The actual port this server is (or will be) listening on."""
+        return self._port
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -69,7 +86,7 @@ class KiMasterWsServer:
             name="KiMaster-WS",
         )
         self._thread.start()
-        _log.info(f"KiMaster WS server starting on ws://{KIMASTER_HOST}:{KIMASTER_PORT}")
+        _log.info(f"KiMaster WS server starting (will auto-discover port {KIMASTER_PORT_START}–{KIMASTER_PORT_END})")
 
     def stop(self):
         """Stop the WS server and background thread."""
@@ -135,21 +152,37 @@ class KiMasterWsServer:
             )
             return
 
-        try:
-            async with websockets.serve(
-                self._handler,
-                KIMASTER_HOST,
-                KIMASTER_PORT,
-                ping_interval=20,
-                ping_timeout=10,
-            ):
-                _log.info(f"KiMaster WS server listening on {KIMASTER_HOST}:{KIMASTER_PORT}")
-                await asyncio.Future()  # run until loop is stopped
-        except OSError as e:
+        # Auto-discover first available port in the configured range.
+        # Allows multiple KiCad instances to each run their own bridge.
+        bound_port = None
+        last_error = None
+        for candidate in range(KIMASTER_PORT_START, KIMASTER_PORT_END + 1):
+            try:
+                server = await websockets.serve(
+                    self._handler,
+                    KIMASTER_HOST,
+                    candidate,
+                    ping_interval=20,
+                    ping_timeout=10,
+                )
+                bound_port = candidate
+                self._port = candidate
+                _log.info(f"KiMaster WS server listening on ws://{KIMASTER_HOST}:{candidate}")
+                break
+            except OSError as e:
+                _log.debug(f"Port {candidate} unavailable: {e}")
+                last_error = e
+                continue
+
+        if bound_port is None:
             _log.error(
-                f"KiMaster WS server failed to bind to port {KIMASTER_PORT}: {e}\n"
-                "Is another KiMaster bridge already running?"
+                f"KiMaster WS server could not bind to any port in range "
+                f"{KIMASTER_PORT_START}–{KIMASTER_PORT_END}: {last_error}"
             )
+            return
+
+        async with server:
+            await asyncio.Future()  # run until loop is stopped
 
     async def _broadcast_async(self, data: str):
         dead: Set = set()
@@ -238,21 +271,81 @@ class KiMasterWsServer:
         elif msg_type == "get_poll_intervals":
             resp = self._on_get_poll_intervals()
             await websocket.send(json.dumps({"type": "poll_intervals", "data": resp}))
-        # ── Phase 5 write commands (all require human-in-the-loop approval on JS side) ──
+        # ── Phase 5 write commands ─────────────────────────────────────────────
+        # ALL write commands are project-locked: validated against board_check
+        # before executing. This prevents cross-project writes if multiple KiCad
+        # instances are running or if the user switches boards mid-session.
         elif msg_type == "move_component":
-            resp = self._on_move_component(msg.get("data", {}))
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            resp = guard if guard else self._on_move_component(data)
             await websocket.send(json.dumps({"type": "op_result", "op": "move_component", **resp}))
         elif msg_type == "rotate_component":
-            resp = self._on_rotate_component(msg.get("data", {}))
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            resp = guard if guard else self._on_rotate_component(data)
             await websocket.send(json.dumps({"type": "op_result", "op": "rotate_component", **resp}))
         elif msg_type == "set_locked":
-            resp = self._on_set_locked(msg.get("data", {}))
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            resp = guard if guard else self._on_set_locked(data)
             await websocket.send(json.dumps({"type": "op_result", "op": "set_locked", **resp}))
         elif msg_type == "set_dnp":
-            resp = self._on_set_dnp(msg.get("data", {}))
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            resp = guard if guard else self._on_set_dnp(data)
             await websocket.send(json.dumps({"type": "op_result", "op": "set_dnp", **resp}))
+        elif msg_type == "regenerate_zones":
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            if guard:
+                await websocket.send(json.dumps({"type": "op_result", "op": "regenerate_zones", **guard}))
+            else:
+                resp = self._on_regenerate_zones(data)
+                await websocket.send(json.dumps({"type": "op_result", "op": "regenerate_zones", **resp}))
+        elif msg_type == "purge_orphan_vias":
+            data = msg.get("data", {})
+            guard = self._check_board(data)
+            if guard:
+                await websocket.send(json.dumps({"type": "op_result", "op": "purge_orphan_vias", **guard}))
+            else:
+                resp = self._on_purge_orphan_vias(data)
+                await websocket.send(json.dumps({"type": "op_result", "op": "purge_orphan_vias", **resp}))
         else:
             _log.debug(f"KiMaster: unhandled message type '{msg_type}'")
+
+    # ── Project lock guard ────────────────────────────────────────────────────
+
+    def _check_board(self, data: dict) -> "dict | None":
+        """
+        Validate the optional ``board_check`` field in a write-command payload.
+
+        KiMaster stamps every write command with the absolute PCB path it
+        believes it is modifying.  If that path does not match the board that
+        is currently open in this KiCad instance, the command is refused — this
+        is the last line of defence against accidental cross-project writes.
+
+        Returns ``None`` if the check passes (command should proceed).
+        Returns an error-result dict if the check fails (command must be skipped).
+        """
+        board_check = data.get("board_check")
+        if not board_check:
+            return None  # no check requested → allow (backwards compat)
+
+        current = str(self._exporter.get_board_name())
+        # Normalise path separators for comparison
+        def _norm(p): return p.replace("\\", "/").strip()
+
+        if _norm(board_check) != _norm(current):
+            msg = (
+                f"Board mismatch — command targets '{board_check}' "
+                f"but this KiCad has '{current}' open. "
+                f"Command rejected to prevent accidental changes to the wrong project."
+            )
+            _log.warning("SAFETY REJECT: %s", msg)
+            return {"success": False, "message": msg}
+
+        return None  # check passed
 
     # ── KiCad status indicator ────────────────────────────────────────────
 
@@ -296,12 +389,15 @@ class KiMasterWsServer:
         except Exception:
             kicad_ver = "unknown"
 
+        pcb_path = str(self._exporter.get_board_name())
+
         await websocket.send(json.dumps({
-            "type":          "hello_ack",
-            "version":       KIMASTER_VERSION,
-            "kicad_version": kicad_ver,
-            "board":         str(self._exporter.get_board_name()),
-            "client_count":  self.client_count,
+            "type":           "hello_ack",
+            "version":        KIMASTER_VERSION,
+            "kicad_version":  kicad_ver,
+            "board":          pcb_path,   # kept for backwards-compat
+            "pcb_path":       pcb_path,   # explicit full path for project auto-detect
+            "client_count":   self.client_count,
             "poll_intervals": self._on_get_poll_intervals(),
         }))
 

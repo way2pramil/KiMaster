@@ -10,6 +10,7 @@ use crate::modules::uce::{
     self, AddToVaultResult,
     LcscClient::{LcscClient, SearchResponse},
     LibraryVault::{VaultEntry, get_vault_contents, remove_from_vault, is_in_vault},
+    PostProcessor::PostProcessConfig,
     VaultManager::{
         StackupEntry, StackupConfig,
         TemplateEntry,
@@ -189,8 +190,9 @@ pub async fn cmd_uce_preview_component(
 /// Args: `lcsc_id: string`
 #[tauri::command(rename_all = "snake_case")]
 pub async fn cmd_uce_add_to_vault(
-    state:   State<'_, KiMasterState>,
-    lcsc_id: String,
+    state:    State<'_, KiMasterState>,
+    lcsc_id:   String,
+    pp_config: Option<serde_json::Value>,
 ) -> Result<AddToVaultResult, String> {
     let vault_dirs = collect_vault_dirs(&state)?;
     let client     = make_client()?;
@@ -200,8 +202,13 @@ pub async fn cmd_uce_add_to_vault(
         .await
         .map_err(|e| format!("Resolution failed: {e}"))?;
 
+    // Deserialise post-process config (missing fields → defaults via #[serde(default)])
+    let cfg: PostProcessConfig = pp_config
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+
     // Write to global vault + project vault (if open) in one fetch
-    uce::add_to_vaults(&client, &vault_dirs, &resolved_id)
+    uce::add_to_vaults(&client, &vault_dirs, &resolved_id, &cfg)
         .await
         .map_err(|e| format!("Add to vault failed: {e}"))
 }

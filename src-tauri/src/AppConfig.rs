@@ -19,6 +19,8 @@ pub const EMBEDDINGS_DB_FILENAME: &str = "embeddings.sqlite";
 pub const CRDT_FILENAME: &str = "crdt_state.bin";
 pub const AI_NOTES_FILENAME: &str = "ai_notes.md";
 pub const COMPONENT_CACHE_FILENAME: &str = "component_cache.json";
+/// Sub-directory inside `.kimaster/` for markdown images, notes attachments, etc.
+pub const KIMASTER_ASSETS_DIR: &str = "assets";
 pub const ASSETS_DIR: &str = "assets";
 
 #[cfg(target_os = "windows")]

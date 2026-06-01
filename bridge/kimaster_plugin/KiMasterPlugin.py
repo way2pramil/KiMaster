@@ -121,7 +121,7 @@ def _run_plugin(self):
         _log.info("KiMaster bridge already running — broadcasting board state")
         self._km_ws_server.broadcast_board_state()
         _notify(
-            "KiMaster bridge is already active on port 40001.\n"
+            f"KiMaster bridge is already active on port {self._km_ws_server.port}.\n"
             "Board state refreshed."
         )
         return
@@ -168,8 +168,12 @@ def _run_plugin(self):
     # Give the WS server references to watchers so it can adjust poll intervals
     self._km_ws_server.set_watchers(self._km_watcher, self._km_board_watcher)
 
+    actual_port = self._km_ws_server.port
     _notify(
-        "KiMaster bridge started on ws://127.0.0.1:40001 — "
-        "connect from the KiMaster app."
+        f"KiMaster bridge started on ws://127.0.0.1:{actual_port} — "
+        f"connect from the KiMaster app."
     )
-    _log.info("KiMaster bridge plugin started (selection poll=500ms, board poll=1000ms)")
+    _log.info(
+        f"KiMaster bridge plugin started on port {actual_port} "
+        f"(selection poll=500ms, board poll=1000ms)"
+    )

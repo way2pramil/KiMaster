@@ -23,6 +23,7 @@ import {
   BRIDGE_CONNECTED, BRIDGE_DISCONNECTED, BRIDGE_BOARD_STATE,
   BRIDGE_BOARD_CHANGED, BRIDGE_SELECTION, BRIDGE_NET_INFO,
   BRIDGE_OP_RESULT, BRIDGE_ERROR, BRIDGE_POLL_INTERVALS,
+  BRIDGE_PROJECT_MISMATCH,
 } from '../../core/AppEvents.js';
 import {
   BRIDGE_CONNECT, BRIDGE_DISCONNECT, BRIDGE_SEND,
@@ -96,9 +97,10 @@ export async function initBridgeListeners() {
     tauriListen(BRIDGE_BOARD_CHANGED, ()  => _onBoardChanged()),
     tauriListen(BRIDGE_SELECTION,     (e) => _onSelection(e.payload)),
     tauriListen(BRIDGE_NET_INFO,      (e) => _onNetInfo(e.payload)),
-    tauriListen(BRIDGE_OP_RESULT,     (e) => _onOpResult(e.payload)),
-    tauriListen(BRIDGE_ERROR,         (e) => _onBridgeError(e.payload)),
-    tauriListen(BRIDGE_POLL_INTERVALS,(e) => _onPollIntervals(e.payload)),
+    tauriListen(BRIDGE_OP_RESULT,       (e) => _onOpResult(e.payload)),
+    tauriListen(BRIDGE_ERROR,           (e) => _onBridgeError(e.payload)),
+    tauriListen(BRIDGE_POLL_INTERVALS,  (e) => _onPollIntervals(e.payload)),
+    tauriListen(BRIDGE_PROJECT_MISMATCH,(e) => _onProjectMismatch(e.payload)),
   ]);
 
   _unlisten = () => unsubs.forEach(fn => fn());
@@ -360,9 +362,11 @@ export function setDnp(reference, dnp) {
 /** @param {BridgeConnectedPayload} payload */
 function _onConnected(payload) {
   Logger.info('Bridge', 'Connected', payload);
-  store.bridgeConnected     = true;
-  store.bridgeKicadVersion  = payload.kicad_version || null;
-  store.bridgeBoardName     = payload.board_name    || null;
+  store.bridgeConnected      = true;
+  store.bridgeKicadVersion   = payload.kicad_version || null;
+  store.bridgeBoardName      = payload.board_name    || null;
+  // Clear any stale mismatch warning from a previous session
+  store.bridgeProjectMismatch = null;
 
   _stopAutoConnect();
 
@@ -372,12 +376,31 @@ function _onConnected(payload) {
 
 function _onDisconnected() {
   Logger.info('Bridge', 'Disconnected');
-  store.bridgeConnected    = false;
-  store.bridgeKicadVersion = null;
-  store.bridgeBoardName    = null;
+  store.bridgeConnected       = false;
+  store.bridgeKicadVersion    = null;
+  store.bridgeBoardName       = null;
+  store.bridgeProjectMismatch = null;
 
   // Resume auto-connect so we reconnect when KiCad restarts
   startAutoConnect();
+}
+
+/**
+ * Called when Rust detects the bridge is reporting a different board than
+ * the one KiMaster locked to at connect time.
+ * @param {{ expected: string, actual: string, port: number }} payload
+ */
+function _onProjectMismatch(payload) {
+  Logger.warn('Bridge',
+    `Project mismatch — locked to "${payload.expected}" but KiCad now reports "${payload.actual}". ` +
+    `Write operations are blocked until you reconnect.`
+  );
+  // Store for the UI to show a warning banner
+  store.bridgeProjectMismatch = {
+    expected: payload.expected,
+    actual:   payload.actual,
+    port:     payload.port,
+  };
 }
 
 function _onBoardState(data) {

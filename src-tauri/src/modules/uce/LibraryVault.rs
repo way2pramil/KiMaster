@@ -38,6 +38,9 @@ pub struct VaultEntry {
     pub mpn:          String,
     pub description:  String,
     pub added_at:     String,
+    /// Stem of the .kicad_mod file (LCSC ID or package name depending on config).
+    #[serde(default)]
+    pub fp_stem:      String,
 }
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
@@ -62,8 +65,8 @@ fn models_dir(kimaster_dir: &str) -> PathBuf {
     vault_dir(kimaster_dir).join(MODELS_DIR)
 }
 
-fn mod_path(kimaster_dir: &str, lcsc_id: &str) -> PathBuf {
-    pretty_dir(kimaster_dir).join(format!("{lcsc_id}.kicad_mod"))
+fn mod_path(kimaster_dir: &str, fp_stem: &str) -> PathBuf {
+    pretty_dir(kimaster_dir).join(format!("{fp_stem}.kicad_mod"))
 }
 
 // ── Provisioning ──────────────────────────────────────────────────────────────
@@ -95,9 +98,15 @@ pub fn provision_vault(kimaster_dir: &str) -> anyhow::Result<()> {
             manufacturer TEXT NOT NULL DEFAULT '',
             mpn          TEXT NOT NULL DEFAULT '',
             description  TEXT NOT NULL DEFAULT '',
+            fp_stem      TEXT NOT NULL DEFAULT '',
             added_at     TEXT NOT NULL DEFAULT (datetime('now'))
-         );",
+         );
+         -- Add fp_stem column to existing databases that predate this schema
+         CREATE TABLE IF NOT EXISTS _schema_meta (key TEXT PRIMARY KEY, val TEXT);
+         INSERT OR IGNORE INTO _schema_meta VALUES ('fp_stem_added', '0');",
     )?;
+    // Best-effort migration: add fp_stem column if missing
+    let _ = conn.execute_batch("ALTER TABLE vault ADD COLUMN fp_stem TEXT NOT NULL DEFAULT '';");
     Ok(())
 }
 
@@ -125,50 +134,51 @@ pub fn upsert_symbol(kimaster_dir: &str, lcsc_id: &str, symbol_content: &str) ->
 }
 
 /// Remove a named symbol block from library text (used before re-inserting).
-fn remove_symbol_block(lib: &str, lcsc_id: &str) -> String {
-    // Match:  \n  (symbol "LCSC_ID"\n    ...\n  )
-    // Using a simple depth-counting parser to handle nested parens correctly.
-    let target = format!("(symbol \"{}\"", lcsc_id);
+///
+/// O(n) implementation: uses `str::find` for the marker, then counts parens
+/// byte-by-byte to find the matching close without any heap allocation per step.
+fn remove_symbol_block(lib: &str, sym_id: &str) -> String {
+    let target = format!("(symbol \"{}\"", sym_id);
     let mut result = String::with_capacity(lib.len());
-    let chars: Vec<char> = lib.chars().collect();
-    let mut i = 0;
+    let mut rest = lib;
 
-    while i < chars.len() {
-        // Check if we're at the start of the target symbol block
-        let remaining: String = chars[i..].iter().collect();
-        if remaining.starts_with(&target) {
-            // Skip past matching closing paren
-            let mut depth = 0;
-            let mut j = i;
-            while j < chars.len() {
-                match chars[j] {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            i = j + 1;
-                            // also skip trailing newline
-                            if i < chars.len() && chars[i] == '\n' { i += 1; }
-                            break;
-                        }
+    while let Some(pos) = rest.find(&target) {
+        // Append everything before the block
+        result.push_str(&rest[..pos]);
+
+        // Depth-count through bytes to find the matching closing paren
+        let block = &rest[pos..];
+        let mut depth: i32 = 0;
+        let mut end = 0;
+        for (i, b) in block.bytes().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i + 1; // one past the ')'
+                        break;
                     }
-                    _ => {}
                 }
-                j += 1;
+                _ => {}
             }
-        } else {
-            result.push(chars[i]);
-            i += 1;
         }
+
+        // Advance past the block; skip one trailing newline if present
+        let skip = if block.as_bytes().get(end) == Some(&b'\n') { end + 1 } else { end };
+        rest = &rest[pos + skip..];
     }
+
+    result.push_str(rest);
     result
 }
 
 // ── Footprint file management ──────────────────────────────────────────────────
 
 /// Write a `.kicad_mod` footprint file to the `KiMaster.pretty/` directory.
-pub fn write_footprint(kimaster_dir: &str, lcsc_id: &str, content: &str) -> anyhow::Result<()> {
-    let path = mod_path(kimaster_dir, lcsc_id);
+/// `fp_stem` is the filename stem (without extension) — either the LCSC ID or the package name.
+pub fn write_footprint(kimaster_dir: &str, fp_stem: &str, content: &str) -> anyhow::Result<()> {
+    let path = mod_path(kimaster_dir, fp_stem);
     fs::write(&path, content)?;
     Ok(())
 }
@@ -198,15 +208,16 @@ fn open_db(kimaster_dir: &str) -> anyhow::Result<Connection> {
 pub fn upsert_vault_entry(kimaster_dir: &str, entry: &VaultEntry) -> anyhow::Result<()> {
     let conn = open_db(kimaster_dir)?;
     conn.execute(
-        "INSERT INTO vault (lcsc_id, name, package, manufacturer, mpn, description, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+        "INSERT INTO vault (lcsc_id, name, package, manufacturer, mpn, description, fp_stem, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
          ON CONFLICT(lcsc_id) DO UPDATE SET
            name=excluded.name, package=excluded.package,
            manufacturer=excluded.manufacturer, mpn=excluded.mpn,
-           description=excluded.description, added_at=excluded.added_at",
+           description=excluded.description, fp_stem=excluded.fp_stem,
+           added_at=excluded.added_at",
         rusqlite::params![
             entry.lcsc_id, entry.name, entry.package,
-            entry.manufacturer, entry.mpn, entry.description,
+            entry.manufacturer, entry.mpn, entry.description, entry.fp_stem,
         ],
     )?;
     Ok(())
@@ -218,7 +229,8 @@ pub fn get_vault_contents(kimaster_dir: &str) -> anyhow::Result<Vec<VaultEntry>>
     if !db.exists() { return Ok(Vec::new()); }
     let conn = open_db(kimaster_dir)?;
     let mut stmt = conn.prepare(
-        "SELECT lcsc_id, name, package, manufacturer, mpn, description, added_at
+        "SELECT lcsc_id, name, package, manufacturer, mpn, description, added_at,
+                COALESCE(fp_stem, lcsc_id)
          FROM vault ORDER BY added_at DESC"
     )?;
     let entries = stmt.query_map([], |row| {
@@ -230,6 +242,7 @@ pub fn get_vault_contents(kimaster_dir: &str) -> anyhow::Result<Vec<VaultEntry>>
             mpn:          row.get(4)?,
             description:  row.get(5)?,
             added_at:     row.get(6)?,
+            fp_stem:      row.get(7)?,
         })
     })?
     .filter_map(|r| r.ok())
@@ -239,8 +252,23 @@ pub fn get_vault_contents(kimaster_dir: &str) -> anyhow::Result<Vec<VaultEntry>>
 
 /// Remove a component from the vault (symbol + footprint + DB entry).
 pub fn remove_from_vault(kimaster_dir: &str, lcsc_id: &str) -> anyhow::Result<()> {
+    // Look up the fp_stem stored in the DB so we delete the correct file
+    let fp_stem = {
+        let db = db_path(kimaster_dir);
+        if db.exists() {
+            let conn = open_db(kimaster_dir)?;
+            conn.query_row(
+                "SELECT COALESCE(NULLIF(fp_stem,''), lcsc_id) FROM vault WHERE lcsc_id = ?1",
+                rusqlite::params![lcsc_id],
+                |row| row.get::<_, String>(0),
+            ).unwrap_or_else(|_| lcsc_id.to_string())
+        } else {
+            lcsc_id.to_string()
+        }
+    };
+
     // Remove footprint file
-    let mod_f = mod_path(kimaster_dir, lcsc_id);
+    let mod_f = mod_path(kimaster_dir, &fp_stem);
     if mod_f.exists() { fs::remove_file(&mod_f)?; }
 
     // Remove symbol from lib file
@@ -257,18 +285,14 @@ pub fn remove_from_vault(kimaster_dir: &str, lcsc_id: &str) -> anyhow::Result<()
     Ok(())
 }
 
-/// Check whether a component is already in the vault.
+/// Check whether a component is already in the vault (by LCSC ID in the DB).
 pub fn is_in_vault(kimaster_dir: &str, lcsc_id: &str) -> bool {
     let db = db_path(kimaster_dir);
     if !db.exists() { return false; }
     let Ok(conn) = open_db(kimaster_dir) else { return false; };
-    let found = conn.query_row(
+    conn.query_row(
         "SELECT 1 FROM vault WHERE lcsc_id = ?1",
         rusqlite::params![lcsc_id],
         |_| Ok(()),
-    );
-    match found {
-        Ok(_) => mod_path(kimaster_dir, lcsc_id).exists(),
-        Err(_) => false,
-    }
+    ).is_ok()
 }

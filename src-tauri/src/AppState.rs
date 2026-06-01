@@ -65,6 +65,18 @@ pub struct KiMasterStateInner {
     pub bridge_cmd_tx: Option<UnboundedSender<BridgeCmd>>,
     /// Most recent board state snapshot received from KiCad.
     pub bridge_board_state: CachedBoardState,
+
+    // ── Project lock ───────────────────────────────────────────────────────
+    /// Absolute path of the `.kicad_pcb` KiMaster is locked to for this session.
+    ///
+    /// Set on `hello_ack` when the bridge connects, cleared on disconnect.
+    /// **All write commands must carry this path as `board_check`.**
+    /// Any command targeting a different path is rejected — both here in Rust
+    /// and by the Python plugin's own `_check_board()` guard.
+    pub locked_board_path: Option<String>,
+    /// The specific port this lock was established on.
+    /// Prevents re-use of a cmd_tx from a stale connection.
+    pub locked_bridge_port: Option<u16>,
 }
 
 /// Tauri-managed state. Access via `State<'_, KiMasterState>` in commands.

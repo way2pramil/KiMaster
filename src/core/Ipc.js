@@ -178,7 +178,12 @@ async function _mockInvoke(cmd, _args) {
     cmd_bridge_rotate_component:       { success: true,  message: 'Mock: rotate_component' },
     cmd_bridge_set_locked:             { success: true,  message: 'Mock: set_locked' },
     cmd_bridge_set_dnp:                { success: true,  message: 'Mock: set_dnp' },
+    cmd_check_plugin_installed:        { installed: true, install_path: 'C:\\Users\\prami\\AppData\\Roaming\\kicad\\10.0\\scripting\\plugins\\kimaster_plugin' },
     cmd_install_bridge_plugin:         { success: false, install_path: null, message: 'Mock: cannot install plugin in browser mode' },
+    cmd_reinstall_bridge_plugin:       { success: false, install_path: null, message: 'Mock: cannot reinstall plugin in browser mode' },
+    cmd_scan_kicad_instances:          [
+      { port: 40001, board_name: 'D:/Upwork Project/TVS/TCU/TCU.kicad_pcb', kicad_version: '10.0.1' },
+    ],
     cmd_get_plugin_install_path:       'C:\\Users\\user\\AppData\\Roaming\\kicad\\10.0\\scripting\\plugins\\kimaster_plugin',
     cmd_export_gerbers: { raw: { exit_code: 0, stdout: 'Mock gerber export complete', stderr: '', success: true }, output_path: './gerbers' },
     cmd_export_drill:   { raw: { exit_code: 0, stdout: 'Mock drill export complete', stderr: '', success: true }, output_path: './drill' },

@@ -101,6 +101,13 @@ export const store = createStore({
   /** @type {string|null} */
   bridgeBoardName: null,
 
+  /**
+   * Set when Rust detects the bridge reports a different board than the locked one.
+   * UI should show a warning banner and block write operations.
+   * @type {{ expected: string, actual: string, port: number }|null}
+   */
+  bridgeProjectMismatch: null,
+
   /** @type {any|null} */
   boardState: null,
 
