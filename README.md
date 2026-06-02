@@ -1,193 +1,144 @@
 # KiMaster
 
-> A powerful companion app for KiCad — live board inspection, component sourcing, DRC, export, and more. All in one native desktop app.
+> A companion app for KiCad that takes the friction out of hardware design — live board inspection, component sourcing, DRC, exports, notes, and revision history. All in one window.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![KiCad](https://img.shields.io/badge/KiCad-7%2B-orange)
-![Tauri](https://img.shields.io/badge/built%20with-Tauri%202-purple)
 ![Status](https://img.shields.io/badge/status-early%20access-yellow)
 
 ---
 
-## What is KiMaster?
+## Why KiMaster?
 
-If you use KiCad, you know the friction: switching between windows, manually copying component data, running DRC from the command line, exporting Gerbers one step at a time. **KiMaster sits alongside KiCad and removes all of that.**
+Every KiCad project involves the same invisible tax: hunting for component datasheets, manually writing BOM entries, switching windows a dozen times to run DRC, and stitching together Gerber exports from memory. That friction adds up — and it doesn't have to exist.
 
-It connects directly to KiCad via a lightweight Python plugin, giving you a live two-way bridge. From one window you can inspect your board, pull components from LCSC, run DRC, manage exports, and keep markdown notes — all without leaving your workflow.
+KiMaster connects directly to your running KiCad session and builds a proper workspace around it. It doesn't replace KiCad. It makes everything around KiCad faster, cleaner, and less error-prone.
 
 ---
 
 ## Features
 
 ### Live KiCad Bridge
-Connect KiMaster to your open KiCad project via a local WebSocket bridge. Once connected, KiMaster has read/write access to your board — commands are locked to the active board path so you never accidentally touch the wrong project.
+KiMaster connects to KiCad through a local plugin. Once linked, the app has live access to your board — board path is locked at connect time, so commands never touch the wrong project.
 
 ### Dashboard
-Customisable widget dashboard with at-a-glance project info: board render preview, recent projects, file tree, netlist graph, quick notes, and keyboard shortcuts.
+A customisable home screen with everything you need at a glance: board render preview, recent projects, file tree, netlist graph, quick notes, and keyboard shortcuts. Rearrange widgets to fit the way you work.
 
 ### Component Vault
-Search LCSC/EasyEDA and pull parts directly into your KiCad library. KiMaster fetches the schematic symbol and footprint, runs a configurable post-processor, and saves everything to your vault — ready to place.
+Search LCSC for parts, preview the symbol and footprint, and pull them directly into your KiCad library — all without leaving KiMaster. Components are stored in your personal vault and are always a search away.
 
 ### Board Render
-High-fidelity board preview inside KiMaster. Pan, zoom, and inspect without opening KiCad's PCB editor.
+See a high-fidelity render of your PCB right inside KiMaster. Pan, zoom, and inspect layers without opening the full PCB editor.
 
 ### DRC Panel
-Run Design Rule Checks from KiMaster. Results are displayed in a clean table — click any violation to jump to it.
+Run Design Rule Checks from KiMaster and read the results in a clean, scannable table. Click any violation to jump to it.
 
 ### Export Wizard
-One-click Gerber, BOM, and assembly export. Configure profiles once and reuse them across projects.
+Configure Gerber, BOM, and assembly export profiles once. Run them in one click from then on — no more remembering which layers to tick.
 
 ### Net Inspector
-Inspect nets by name. See connected pads, track lengths, and highlight nets in the board render.
+Look up any net by name. See connected pads and track lengths, and highlight nets directly on the board render.
 
 ### Netlist Graph
-Interactive force-directed graph of your schematic's netlist — great for understanding complex designs.
+An interactive force-directed graph of your schematic's netlist. Useful for understanding densely connected designs before routing.
 
 ### Revision Timeline
-Git-powered revision history for your project directory. Browse commits, diffs, and file changes without leaving the app.
+Git-powered project history built into the app. Browse commits, read diffs, and understand what changed between sessions — without opening a terminal.
 
 ### Project Notes
-Markdown notes scoped to each project. Auto-saved, always available.
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Desktop shell | [Tauri 2](https://tauri.app) (Rust) |
-| Frontend | Vanilla JS + Web Components (no framework) |
-| Backend | Rust (async, Tokio) |
-| KiCad bridge | Python plugin (KiCad scripting host) |
-| Component data | LCSC / EasyEDA API |
-| Local storage | SQLite (project recents, vault) |
+Markdown notes attached to each project. They open automatically when you load a project and save automatically as you type.
 
 ---
 
 ## Requirements
 
-- Windows 10/11 (macOS/Linux support planned)
+- Windows 10 or 11
 - [KiCad 7 or newer](https://www.kicad.org/)
-- [Node.js 18+](https://nodejs.org/) and [Rust toolchain](https://rustup.rs/) — for building from source
 
 ---
 
 ## Installation
 
-### Option A — Build from source
+Pre-built installers will be on the [Releases](../../releases) page once the first stable build ships.
 
-```bash
-# 1. Clone
-git clone https://github.com/your-username/KiMaster.git
-cd KiMaster
-
-# 2. Install JS dependencies
-npm install
-
-# 3. Run in dev mode (Tauri + Vite hot-reload)
-npm run dev:tauri
-
-# 4. Or build a release .exe
-npm run build:tauri
-```
-
-### Option B — Download a release
-
-Pre-built installers will be available on the [Releases](../../releases) page once the first stable build ships.
+To build from source, see [Building from source](#building-from-source) below.
 
 ---
 
 ## KiCad Plugin Setup
 
-KiMaster communicates with KiCad through a Python plugin. After building or installing:
+KiMaster talks to KiCad through a small plugin that runs inside KiCad's scripting host.
 
-1. Copy the `bridge/kimaster_plugin/` folder into your KiCad scripting directory:
+1. Copy the `bridge/kimaster_plugin/` folder into your KiCad scripting plugins directory:
    - Windows: `%APPDATA%\kicad\8.0\scripting\plugins\`
 2. In KiCad, open **Tools → Scripting Console** and run:
    ```python
    import kimaster_plugin; kimaster_plugin.start()
    ```
-   Or add it to your KiCad startup script so it loads automatically.
-3. Launch KiMaster and click **Connect** — the bridge handshake will complete automatically.
+   Add this to your KiCad startup script to have it load automatically every time.
+3. Open KiMaster and click **Connect** — the handshake completes in under a second.
 
-> The plugin listens on `localhost:40001` and only accepts connections from KiMaster. No data leaves your machine.
+> The plugin listens on `localhost:40001` only. No data leaves your machine.
 
 ---
 
-## Development
+## Building from source
 
 ```bash
-npm run dev          # Browser-only (mock IPC — no Tauri needed)
-npm run dev:tauri    # Full app with Tauri
-npm run check        # Rust check + Vite build check
-npm run check:all    # fmt + clippy + full check
-npm run rust:test    # Cargo tests
-npm run build:tauri  # Production build
+# Clone the repo
+git clone https://github.com/way2pramil/KiMaster.git
+cd KiMaster
+
+# Install dependencies
+npm install
+
+# Run in development mode
+npm run dev:tauri
+
+# Build a release installer
+npm run build:tauri
 ```
 
-### Project layout
-
-```
-src/                 Vanilla JS frontend
-  core/              State, IPC, routing, events
-  components/ui/     Reusable Web Components (km-* prefix)
-  components/features/ One folder per panel
-  modules/           Domain logic (no DOM)
-
-src-tauri/src/
-  ipc/               Tauri command handlers (thin wrappers)
-  modules/
-    bridge/          WebSocket client ↔ Python plugin
-    uce/             LCSC component fetcher & vault
-    project/         KiCad project management + SQLite recents
-    cli/             kicad-cli runner (DRC, export)
-    git/             Revision history via git shell
-    notes/           Per-project markdown notes
-
-bridge/              Python plugin for KiCad
-```
+You will need [Node.js 18+](https://nodejs.org/) and the [Rust toolchain](https://rustup.rs/) installed.
 
 ---
 
 ## Roadmap
 
 - [ ] macOS and Linux support
-- [ ] Installer / auto-updater
+- [ ] Auto-updater
 - [ ] Component vault sync across machines
 - [ ] Schematic editor integration
 - [ ] BOM diff between revisions
-- [ ] Cloud backup for notes
+- [ ] Cloud backup for project notes
 
 ---
 
 ## Contributing
 
-Contributions are welcome. If you find a bug or have a feature idea, please open an issue first so we can discuss it before you put in the work.
+Found a bug? Have a feature idea? Open an issue and let's talk about it before you write any code — that way the work won't go to waste.
 
-For code changes:
-1. Fork and create a feature branch
-2. Follow the code style in [CLAUDE.md](CLAUDE.md)
-3. Open a pull request with a clear description of what changed and why
+For changes:
+1. Fork the repo and create a feature branch
+2. Open a pull request with a clear description of what changed and why
 
 ---
 
 ## Support the Project
 
-KiMaster is free and open source. If it saves you time on your next PCB project, consider supporting its development:
+KiMaster is free and open source. It has been built over many months of late nights and weekends, tested on real hardware projects, and shaped by the frustrations of actually using KiCad day to day.
 
-**GitHub Sponsors** — [sponsor this project](https://github.com/sponsors/your-username)
+If it makes your workflow better, consider buying me a coffee — it genuinely helps keep the project alive.
 
-**Buy Me a Coffee** — [buymeacoffee.com/your-username](https://buymeacoffee.com/your-username)
+**GitHub Sponsors** — [github.com/sponsors/way2pramil](https://github.com/sponsors/way2pramil)
 
-Even a small contribution helps cover the time spent building and maintaining the tool. Thank you.
+**Buy Me a Coffee** — [buymeacoffee.com/way2pramil](https://buymeacoffee.com/way2pramil)
+
+Every contribution, no matter how small, is appreciated. Thank you.
 
 ---
 
 ## License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
-
----
-
-*Built by a hardware engineer who got tired of the KiCad workflow friction.*
