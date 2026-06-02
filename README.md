@@ -101,7 +101,7 @@ Pre-built installers will be on the [Releases](../../releases) page once the fir
 ## 📋 Requirements
 
 - Windows 10 or 11
-- [KiCad 7 or newer](https://www.kicad.org/)
+- [KiCad 9 or newer](https://www.kicad.org/)
 
 ---
 
