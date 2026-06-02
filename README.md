@@ -82,25 +82,6 @@ Markdown notes tied to each project. Open automatically when you load a project,
 
 Pre-built installers will be on the [Releases](../../releases) page once the first stable build ships.
 
-### Build from Source
-
-```bash
-# Clone
-git clone https://github.com/way2pramil/KiMaster.git
-cd KiMaster
-
-# Install dependencies
-npm install
-
-# Run in development mode
-npm run dev:tauri
-
-# Build a release installer
-npm run build:tauri
-```
-
-Requires [Node.js 18+](https://nodejs.org/) and the [Rust toolchain](https://rustup.rs/).
-
 ### KiCad Plugin Setup
 
 1. Copy the `bridge/kimaster_plugin/` folder to your KiCad scripting plugins directory:
@@ -140,12 +121,15 @@ The goal hasn't changed: **remove friction, not features.** KiMaster doesn't try
 
 ## 🗺️ Roadmap
 
-- [ ] macOS and Linux support
+- [ ] Mouser and DigiKey integration for Component Vault.
 - [ ] Auto-updater
-- [ ] Component vault sync across machines
-- [ ] Schematic editor integration
+- [ ] PCB layout manipulation.
+- [ ] Schematic editor integration when IPC for schematic is ready (expected in KiCad 11), we can control and manipulate schematics.
 - [ ] BOM diff between revisions
-- [ ] Cloud backup for project notes
+- [ ] Real-time calculation for impedance, stackup, and track width.
+- [ ] Via Stitching 
+
+
 
 ---
 
