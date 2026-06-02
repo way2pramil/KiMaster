@@ -1,13 +1,55 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
 dist/
+target/
 src-tauri/target/
+
+# ── Tauri generated ───────────────────────────────────────────────────────────
 src-tauri/gen/
-.env
-.env.*
-*.log
+WixTools/
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ── OS noise ──────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-.kimaster/
+desktop.ini
+
+# ── AI / local tooling ────────────────────────────────────────────────────────
+.claude/
+.serena/
+.headroom/
+src-tauri/.headroom/
+repomix-output.xml
+*.bundle
+
+# ── Local Cargo config (machine-specific) ─────────────────────────────────────
+.cargo/
+
+# ── Markdown — internal notes, keep README.md only ────────────────────────────
+*.md
+!README.md
+
+# ── Internal folders ──────────────────────────────────────────────────────────
+docs/
+src-tauri/proto/
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
-.claude/settings.local.json
+
+# ── Logs / temp ───────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ── Env / secrets ─────────────────────────────────────────────────────────────
+.env
+.env.*
+.kimaster/
