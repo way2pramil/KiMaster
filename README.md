@@ -9,6 +9,16 @@
 
 ---
 
+## Demo
+
+<!-- Add a short screen recording or GIF here. Example:
+[![KiMaster Demo](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
+-->
+
+> Video demo coming soon.
+
+---
+
 ## Why KiMaster?
 
 Every KiCad project involves the same invisible tax: hunting for component datasheets, manually writing BOM entries, switching windows a dozen times to run DRC, and stitching together Gerber exports from memory. That friction adds up — and it doesn't have to exist.
