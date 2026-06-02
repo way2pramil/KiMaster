@@ -418,17 +418,14 @@ TEMPLATE.innerHTML = `
 
   /* ── About section ── */
   .about-logo {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--km-radius-md);
-    background: var(--km-accent);
+    width: 72px;
+    height: 72px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: var(--km-space-3);
-    box-shadow: var(--km-shadow-glow);
+    margin-bottom: var(--km-space-4);
   }
-  .about-logo svg { width: 28px; height: 28px; }
+  .about-logo svg { width: 72px; height: 72px; }
   .about-version {
     font-size: var(--km-font-size-2xl);
     font-weight: var(--km-font-weight-semibold);
@@ -468,10 +465,20 @@ export class SettingsPanel extends HTMLElement {
     this._globalVaultDir  = '';
     this._projectVaultDir = null;
     this._unlisten        = [];
+    this._applyAllSettings();
     this._renderNav();
     this._renderContent(this._activeId);
     this._loadVaultDirs();
     this._initEventListeners();
+  }
+
+  _applyAllSettings() {
+    const s = this._settings;
+    if (s.accentPreset)    this._applyAccent(s.accentPreset);
+    if (s.interfaceFont)   this._save('interfaceFont',   s.interfaceFont);
+    if (s.interfaceScale)  this._save('interfaceScale',  s.interfaceScale);
+    if (s.contentDensity)  this._save('contentDensity',  s.contentDensity);
+    if (s.hiContrastDark !== undefined) this._save('hiContrastDark', s.hiContrastDark);
   }
 
   disconnectedCallback() {
@@ -909,18 +916,31 @@ export class SettingsPanel extends HTMLElement {
     return `
       <div class="section">
         <div class="about-logo">
-          <svg viewBox="0 0 28 28" fill="none">
-            <path d="M5 22L14 6l9 16" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M8.5 16h11" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          <svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <line x1="152" y1="144" x2="872" y2="144" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="152" y1="880" x2="872" y2="880" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="152" y1="144" x2="152" y2="880" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="872" y1="144" x2="872" y2="880" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="336" y1="342" x2="336" y2="706" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="696" y1="342" x2="696" y2="706" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="336" y1="342" x2="512" y2="524" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <line x1="696" y1="342" x2="512" y2="524" stroke="url(#km-g)" stroke-width="76" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="km-g" x1="152" y1="144" x2="872" y2="880" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#FFF099"/>
+                <stop offset="1" stop-color="#D4AF37"/>
+              </linearGradient>
+            </defs>
           </svg>
         </div>
         <div class="about-version">KiMaster ${version}</div>
         <div class="about-sub">Advanced KiCad Companion — local-first, no cloud.</div>
         <div class="about-links">
-          <a class="about-link">GitHub</a>
-          <a class="about-link">Changelog</a>
-          <a class="about-link">Docs</a>
-          <a class="about-link">License (MIT)</a>
+          <a class="about-link" href="https://github.com/way2pramil/KiMaster" target="_blank">GitHub</a>
+          <a class="about-link" href="https://github.com/way2pramil/KiMaster/releases" target="_blank">Changelog</a>
+          <a class="about-link" href="https://github.com/sponsors/way2pramil" target="_blank">Sponsor ♥</a>
+          <a class="about-link" href="https://buymeacoffee.com/pramil" target="_blank">Buy Me a Coffee</a>
+          <a class="about-link" href="https://github.com/way2pramil/KiMaster/blob/master/LICENSE" target="_blank">License (Apache 2.0)</a>
         </div>
 
         <div class="group" style="margin-top:var(--km-space-6);">
@@ -1177,10 +1197,19 @@ export class SettingsPanel extends HTMLElement {
       }
 
       case 'interfaceScale': {
-        const sizes = { small: '12px', default: '14px', large: '16px' };
-        root.style.setProperty('--km-font-size-base', sizes[value] || '14px');
-        root.style.setProperty('--km-font-size-sm',   value === 'large'  ? '14px' : value === 'small' ? '10px' : '12px');
-        root.style.setProperty('--km-font-size-lg',   value === 'large'  ? '18px' : value === 'small' ? '14px' : '16px');
+        const scaleMap = {
+          small:   { '2xs': '9px',  xs: '10px', sm: '11px', base: '12px', md: '13px', lg: '14px', xl: '16px' },
+          default: { '2xs': '10px', xs: '11px', sm: '12px', base: '13px', md: '14px', lg: '16px', xl: '18px' },
+          large:   { '2xs': '11px', xs: '12px', sm: '13px', base: '14px', md: '15px', lg: '18px', xl: '20px' },
+        };
+        const s = scaleMap[value] || scaleMap.default;
+        root.style.setProperty('--km-font-size-2xs',  s['2xs']);
+        root.style.setProperty('--km-font-size-xs',   s.xs);
+        root.style.setProperty('--km-font-size-sm',   s.sm);
+        root.style.setProperty('--km-font-size-base', s.base);
+        root.style.setProperty('--km-font-size-md',   s.md);
+        root.style.setProperty('--km-font-size-lg',   s.lg);
+        root.style.setProperty('--km-font-size-xl',   s.xl);
         break;
       }
 
