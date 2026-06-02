@@ -37,6 +37,8 @@ Your workflow keeps getting interrupted. You're a hardware engineer — you shou
 <!-- Add a short screen recording or GIF here. Example:
 [![KiMaster Demo](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
 -->
+<img width="3823" height="2040" alt="image" src="https://github.com/user-attachments/assets/42a66e82-bdf2-46ff-baa8-2b82cade0995" />
+
 
 > Video demo coming soon.
 
