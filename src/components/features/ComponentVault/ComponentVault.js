@@ -28,7 +28,7 @@ import {
 import { load as loadPpCfg } from '../../../modules/uce/PostProcessConfig.js';
 import './VaultPostProcessPanel.js';
 import {
-  GET_VAULT_DIR, SET_VAULT_DIR,
+  SET_VAULT_DIR,
   VAULT_LIST_STACKUPS, VAULT_SAVE_STACKUP, VAULT_LOAD_STACKUP, VAULT_REMOVE_STACKUP,
   VAULT_LIST_TEMPLATES, VAULT_IMPORT_TEMPLATE, VAULT_INSTANTIATE_TEMPLATE, VAULT_REMOVE_TEMPLATE,
   VAULT_LIST_BLOCKS, VAULT_IMPORT_BLOCK, VAULT_REMOVE_BLOCK,
@@ -527,49 +527,37 @@ export class KmComponentVault extends HTMLElement {
     this._unsubs = [];
   }
 
-  // ── Vault (global — project-independent) ──────────────────────────────────
+  // ── Vault ──────────────────────────────────────────────────────────────────
 
   async _loadVault() {
     this._vault = await getVault();
-    this._renderVault();
     this._updateVaultCount();
+    return this._vault;
   }
 
   _updateVaultCount() {
     const el = this.shadowRoot.getElementById('vault-count');
-    if (el) el.textContent = `${this._vault.length} in vault`;
-  }
-
-  // ── Vault directory ────────────────────────────────────────────────────────
-
-  async _loadVaultDir() {
-    try {
-      const r = await invoke(GET_VAULT_DIR);
-      this._setVaultDirDisplay(r.global_vault || '');
-    } catch (err) {
-      Logger.warn('ComponentVault', 'Could not load vault dir', err);
+    if (el) {
+      el.textContent = this._vault.length
+        ? `${this._vault.length} installed`
+        : '';
     }
   }
 
-  _setVaultDirDisplay(path) {
-    const el = this.shadowRoot.getElementById('vault-dir-path');
-    if (!el) return;
-    el.textContent = path || '…';
-    el.title = path || '';
-  }
+  // ── Vault directory (managed via Settings panel — no controls here) ─────────
 
   _wireVaultDir() {
     const btn = this.shadowRoot.getElementById('btn-change-vault-dir');
-    if (!btn) return;
+    if (!btn) return;  // element was removed — no-op guard
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       btn.textContent = 'Selecting…';
       try {
         const r = await invoke(SET_VAULT_DIR, {});
-        this._setVaultDirDisplay(r.global_vault || '');
         this._setStatus(`Library directory set to: ${r.global_vault}`, 'ok');
         // Reload vault from new location
         await this._loadVault();
+        this._renderBody();
       } catch (err) {
         const msg = String(err);
         if (!msg.includes('No folder selected')) {
@@ -939,9 +927,13 @@ export class KmComponentVault extends HTMLElement {
       if (!r.has_footprint) missing.push('footprint');
       if (!r.has_3d_model)  missing.push('3D model');
 
+      const libNotice = r.lib_registered_first_time
+        ? '  ·  KiMaster library registered in project — ready to use in KiCad.'
+        : '';
+
       if (missing.length === 0) {
         if (btn) { btn.className = 'add-vault-btn success'; btn.innerHTML = '✓ Added'; btn.disabled = true; }
-        this._setStatus(`✓ ${lcscId} added  (${r.timings?.total_ms ?? '?'}ms)`, 'ok');
+        this._setStatus(`✓ ${lcscId} added  (${r.timings?.total_ms ?? '?'}ms)${libNotice}`, 'ok');
       } else {
         // Partial success — show warning with what's missing
         const missingStr = missing.join(', ');
@@ -952,7 +944,7 @@ export class KmComponentVault extends HTMLElement {
           btn.title     = `Missing: ${missingStr}`;
         }
         this._setStatus(
-          `⚠ ${lcscId} added — missing: ${missingStr}. ${_missingHelp(missing)}`,
+          `⚠ ${lcscId} added — missing: ${missingStr}. ${_missingHelp(missing)}${libNotice}`,
           'warn'
         );
       }

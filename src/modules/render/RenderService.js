@@ -14,6 +14,33 @@ import { Logger  } from '../../core/Logger.js';
 import { store   } from '../../core/State.js';
 import { RENDER_PCB, RENDER_ALL_SIDES } from '../../core/AppCommands.js';
 
+/**
+ * The PCB file to render: bridge board (live KiCad session) takes priority
+ * over the file-picker project path.
+ * @returns {string|null}
+ */
+function activePcbFile() {
+  return store.boardState?.board_name ?? store.project?.pcb_file ?? null;
+}
+
+/**
+ * Output dir for renders. Uses .kimaster dir from project if available;
+ * otherwise places renders next to the board file (bridge-only case).
+ * @returns {string|null}
+ */
+function renderOutDir() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  if (store.project?.kimaster_dir) {
+    const sep = store.project.kimaster_dir.includes('\\') ? '\\' : '/';
+    return `${store.project.kimaster_dir}${sep}renders${sep}${stamp}`;
+  }
+  const pcb = activePcbFile();
+  if (!pcb) return null;
+  const sep = pcb.includes('\\') ? '\\' : '/';
+  const dir = pcb.split(sep).slice(0, -1).join(sep);
+  return `${dir}${sep}.kimaster_renders${sep}${stamp}`;
+}
+
 const TAG = 'RenderService';
 
 /**
@@ -33,50 +60,39 @@ const TAG = 'RenderService';
  */
 
 /**
- * Compute a `.kimaster/renders/<ts>/` directory for a fresh render batch.
- * Returns null if no project is open.
- * @returns {string|null}
- */
-function renderDir() {
-  const proj = store.project;
-  if (!proj?.kimaster_dir) return null;
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const sep = proj.kimaster_dir.includes('\\') ? '\\' : '/';
-  return `${proj.kimaster_dir}${sep}renders${sep}${stamp}`;
-}
-
-/**
  * Render a single view of the active project's PCB.
  * @param {RenderOptions} [options]
  * @returns {Promise<{ success: boolean, output_path: string, message: string }>}
  */
 export async function renderSide(options = {}) {
-  const proj = store.project;
-  if (!proj?.pcb_file) {
-    return { success: false, output_path: '', message: 'No project / PCB file' };
+  const pcbFile = activePcbFile();
+  if (!pcbFile) {
+    return { success: false, output_path: '', message: 'No PCB file — open a project or connect the bridge.' };
   }
-  const dir  = renderDir();
+  const dir  = renderOutDir();
   const side = options.side ?? 'top';
-  const sep  = proj.pcb_file.includes('\\') ? '\\' : '/';
+  const sep  = pcbFile.includes('\\') ? '\\' : '/';
   const outFile = `${dir}${sep}render_${side}.png`;
 
   try {
     const res = await invoke(RENDER_PCB, {
-      pcb_file:    proj.pcb_file,
-      output_file: outFile,
-      side,
-      width_px:    options.width_px    ?? 1280,
-      height_px:   options.height_px   ?? 720,
-      background:  options.background  ?? 'default',
-      quality:     options.quality     ?? 'high',
-      zoom:        options.zoom,
-      floor:       options.floor,
-      perspective: options.perspective ?? true,
-      preset:      options.preset      ?? 'follow_pcb_editor',
+      args: {
+        pcb_file:    pcbFile,
+        output_file: outFile,
+        side,
+        width_px:    options.width_px    ?? 1280,
+        height_px:   options.height_px   ?? 720,
+        background:  options.background  ?? 'default',
+        quality:     options.quality     ?? 'high',
+        zoom:        options.zoom,
+        floor:       options.floor,
+        perspective: options.perspective ?? true,
+        preset:      options.preset      ?? 'follow_pcb_editor',
+      },
     });
     return {
       success:     res?.raw?.success ?? true,
-      output_path: res?.output_path ?? outFile,
+      output_path: outFile,
       message:     res?.raw?.stderr || 'Rendered.',
     };
   } catch (err) {
@@ -91,20 +107,22 @@ export async function renderSide(options = {}) {
  * @returns {Promise<{ success: boolean, output_dir: string, files: string[], failures: string[], message: string }>}
  */
 export async function renderAllSides(options = {}) {
-  const proj = store.project;
-  if (!proj?.pcb_file) {
-    return { success: false, output_dir: '', files: [], failures: ['no project'], message: 'No project / PCB file' };
+  const pcbFile = activePcbFile();
+  if (!pcbFile) {
+    return { success: false, output_dir: '', files: [], failures: ['no pcb'], message: 'No PCB file — open a project or connect the bridge.' };
   }
-  const dir = renderDir();
+  const dir = renderOutDir();
   try {
     return await invoke(RENDER_ALL_SIDES, {
-      pcb_file:   proj.pcb_file,
-      output_dir: dir,
-      sides:      options.sides ?? [],
-      width_px:   options.width_px   ?? 1280,
-      height_px:  options.height_px  ?? 720,
-      quality:    options.quality    ?? 'high',
-      background: options.background ?? 'default',
+      args: {
+        pcb_file:   pcbFile,
+        output_dir: dir,
+        sides:      options.sides ?? [],
+        width_px:   options.width_px   ?? 1280,
+        height_px:  options.height_px  ?? 720,
+        quality:    options.quality    ?? 'high',
+        background: options.background ?? 'default',
+      },
     });
   } catch (err) {
     Logger.error(TAG, 'renderAllSides failed', err);

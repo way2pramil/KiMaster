@@ -95,8 +95,26 @@ export const store = createStore({
   /** @type {boolean} */
   bridgeConnected: false,
 
+  /** @type {number} Port of the active bridge connection */
+  bridgePort: 40001,
+
+  /** @type {boolean} Whether to auto-connect to the bridge on boot */
+  bridgeAutoConnect: true,
+
+  /**
+   * Latch set by disconnectBridge(). Prevents startAutoConnect() from
+   * re-engaging the polling loop after the user clicks Disconnect. Cleared
+   * again on the next successful connect (manual or automatic), so a fresh
+   * connection from KiCad's side resumes normal auto-connect behaviour.
+   * @type {boolean}
+   */
+  bridgeManuallyDisconnected: false,
+
   /** @type {string|null} */
   bridgeKicadVersion: null,
+
+  /** @type {string|null} Python plugin version from hello_ack (e.g. "0.1.1") */
+  bridgePluginVersion: null,
 
   /** @type {string|null} */
   bridgeBoardName: null,
@@ -107,6 +125,14 @@ export const store = createStore({
    * @type {{ expected: string, actual: string, port: number }|null}
    */
   bridgeProjectMismatch: null,
+
+  /**
+   * True when the user explicitly stopped the bridge server from inside KiCad.
+   * UI should show "Server stopped — re-activate plugin in KiCad to reconnect."
+   * NOT the same as a disconnection — auto-reconnect is suppressed.
+   * @type {boolean}
+   */
+  bridgeServerStopped: false,
 
   /** @type {any|null} */
   boardState: null,
@@ -170,4 +196,50 @@ export const store = createStore({
 
   /** @type {string|null} */
   appVersion: null,
+
+  /** @type {null|{ nodes: any[], links: any[], floating_nets: string[], isolated_components: string[], stats: object }} */
+  netlistGraph: null,
+
+  /** @type {'idle'|'loading'|'done'|'error'} */
+  netlistGraphStatus: 'idle',
+
+  /** @type {object|null} active PCB stackup configuration (persists across navigation) */
+  stackupConfig: null,
+
+  /**
+   * Live stackup extracted from the open KiCad board via bridge.
+   * Set by BridgeClient when `bridge:stackup_data` arrives.
+   * Shape: { board_name, layers: StackupLayer[], source, error? } | null
+   * @type {object|null}
+   */
+  bridgeStackup: null,
+
+  // ── Upcoming: Option B — Component Current Budgets ────────────────────────
+  // stackupComponentCurrents: {}   // { [ref]: { current_mA } }
+  // stackupSegmentResults: []      // per-segment pass/fail after PDN tree walk
+
+  // ── Upcoming: Option C — Track Width Histogram ────────────────────────────
+  // stackupTrackHistogram: null    // { buckets: [{width_mm, count, layers, max_current_A}] }
+
+  // ── Canvas (Footprint + Symbol editor) ────────────────────────────────────
+  /** @type {Array} EDAElement[] currently loaded */
+  canvasElements: [],
+  /** @type {string} Rust temp copy path */
+  canvasTempPath: '',
+  /** @type {string} Source file path */
+  canvasOriginalPath: '',
+  /** @type {'footprint'|'symbol'|''} */
+  canvasFileType: '',
+  /** @type {string} Symbol name when fileType='symbol' */
+  canvasSymbolName: '',
+  /** @type {Array} Mutation[] cleared on save */
+  canvasMutations: [],
+  /** @type {Set<string>} Selected element IDs (Excalidraw flat-set pattern) */
+  canvasSelectedIds: new Set(),
+  /** @type {boolean} True after first unsaved mutation */
+  canvasIsDirty: false,
+  /** @type {Set<string>} Visible KiCad layer names */
+  canvasVisibleLayers: new Set(['F.Cu', 'F.SilkS', 'F.Courtyard', 'F.Fab', 'B.Cu', 'B.SilkS', 'Cmts.User', 'User.Comments']),
+  /** @type {string} SHA-256 hex of file at load — conflict detection */
+  canvasOriginalHash: '',
 });

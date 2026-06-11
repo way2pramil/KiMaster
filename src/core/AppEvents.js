@@ -12,8 +12,9 @@
 // ── Tauri events (emitted by Rust → listened in JS) ──────────────────────────
 export const BRIDGE_CONNECTED    = 'bridge:connected';
 export const BRIDGE_DISCONNECTED = 'bridge:disconnected';
-export const BRIDGE_BOARD_STATE  = 'bridge:board_state';
-export const BRIDGE_BOARD_CHANGED= 'bridge:board_changed';
+export const BRIDGE_BOARD_STATE      = 'bridge:board_state';
+export const BRIDGE_SCHEMATIC_STATE  = 'bridge:schematic_state';
+export const BRIDGE_BOARD_CHANGED    = 'bridge:board_changed';
 export const BRIDGE_SELECTION    = 'bridge:selection';
 export const BRIDGE_NET_INFO     = 'bridge:net_info';
 /** Forwarded write-op result: { type:'op_result', op:string, success, message, ...extras } */
@@ -34,6 +35,26 @@ export const BRIDGE_PROJECT_LOCKED   = 'bridge:project_locked';
  * Write ops must be blocked until user reconnects or confirms the switch.
  */
 export const BRIDGE_PROJECT_MISMATCH = 'bridge:project_mismatch';
+/**
+ * Emitted when the KiCad plugin is deliberately stopped by the user in KiCad
+ * (Stop Server option). Different from a disconnect — the user explicitly
+ * closed the port. UI should show a clear "stopped" banner, NOT "reconnecting".
+ * { message: string }
+ */
+export const BRIDGE_SERVER_STOPPED   = 'bridge:server_stopped';
+/**
+ * Emitted when the Python plugin returns live board stackup data.
+ * { board_name, layers: StackupLayer[], source: 'pcbnew_api'|'file_parse', error? }
+ */
+export const BRIDGE_STACKUP_DATA     = 'bridge:stackup_data';
+
+// ── KiCad IPC API events ──────────────────────────────────────────────────────
+/** Emitted when IPC connects: { socket_path } */
+export const IPC_CONNECTED    = 'ipc:connected';
+/** Emitted when IPC disconnects: {} */
+export const IPC_DISCONNECTED = 'ipc:disconnected';
+/** Emitted on IPC error: { message } */
+export const IPC_ERROR        = 'ipc:error';
 
 // ── Project events (emitted by Rust → listened in JS) ────────────────────────
 export const PROJECT_OPENED        = 'project:opened';

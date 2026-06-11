@@ -3,7 +3,9 @@
  * Inline styles BANNED — use CSS classes from views.css / tokens.css.
  */
 
+import './lib/kicanvas/vendor/kicanvas.js';
 import './components/ui/index.js';
+import './components/features/FootprintEditor/FootprintEditor.js';
 import './components/features/DrcPanel/DrcPanel.js';
 import './components/features/ExportWizard/ExportWizard.js';
 import './components/features/SettingsPanel/SettingsPanel.js';
@@ -12,9 +14,13 @@ import './components/features/RevisionTimeline/RevisionTimeline.js';
 import './components/features/NotesEditor/NotesEditor.js';
 import './components/features/ComponentVault/ComponentVault.js';
 import './components/features/BoardRender/BoardRender.js';
+import './components/features/Live3D/Live3D.js';
+import './components/features/PCB3D/PCB3D.js';
 import './components/features/Dashboard/Dashboard.js';
 import './components/features/NetInspector/NetInspector.js';
 import './components/features/BomTable/BomTable.js';
+import './components/features/NetlistGraph/NetlistGraph.js';
+import './components/features/StackupManager/StackupManager.js';
 import {
   alignLeft, alignRight, alignTop, alignBottom,
   alignCentreH, alignCentreV,
@@ -22,12 +28,14 @@ import {
   snapToGrid,
 } from './modules/board/AlignService.js';
 import { AnimationKit }     from './design/animations/index.js';
+import { kcvOverlay } from './modules/render/KiCanvasView.js';
 import { initIpc, invoke, invokeNow } from './core/Ipc.js';
 import { store, subscribe } from './core/State.js';
 import { Router }           from './core/Router.js';
 import { Logger }           from './core/Logger.js';
-import { THEME }            from './core/AppKeys.js';
-import { GET_APP_INFO, GET_KICAD_CLI_PATH } from './core/AppCommands.js';
+import { notify }           from './core/Notify.js';
+import { THEME, SETTINGS }  from './core/AppKeys.js';
+import { GET_APP_INFO, GET_KICAD_CLI_PATH, SCAN_KICAD_INSTANCES } from './core/AppCommands.js';
 import { KM_NAV, KM_NOTES_LINK_CLICK } from './core/AppEvents.js';
 import {
   loadProjectState,
@@ -36,10 +44,11 @@ import {
 } from './modules/project/ProjectService.js';
 import { autoDrcOnChange, errorCount } from './modules/drc/DrcService.js';
 import {
-  initBridgeListeners, connectBridge, disconnectBridge, startAutoConnect,
+  initBridgeListeners, connectKiCad, disconnectBridge, startAutoConnect,
   installBridgePlugin, getPluginInstallPath, requestBoardState,
   highlightComponent, clearHighlight, moveComponent, setLocked, setDnp,
 } from './modules/kicad-bridge/BridgeClient.js';
+import { renderPluginSlot } from './modules/kicad-bridge/PluginSlot.js';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -66,13 +75,18 @@ async function boot() {
   await initProjectListeners().catch((err) => Logger.warn('Boot', 'initProjectListeners failed', err));
   await initBridgeListeners().catch((err) => Logger.warn('Boot', 'initBridgeListeners failed', err));
 
+  hydrateBridgeSettings();
+
   setupRouter();
   setupTheme();
   setupSidebarNav();
   setupCommandPalette();
 
-  // Auto-connect to KiCad bridge (polls every 3s until connected)
-  startAutoConnect(3000);
+  // Auto-connect to KiCad bridge (polls every 3s until connected).
+  // Respects the user's `bridgeAutoConnect` and `bridgePort` settings.
+  if (store.bridgeAutoConnect) {
+    startAutoConnect(3000);
+  }
 
   // CSS @keyframes handles initial app reveal — no JS opacity manipulation needed
 }
@@ -94,8 +108,16 @@ function setupRouter() {
     .on('/notes',     renderNotes)
     .on('/vault',     renderVault)
     .on('/render',    renderBoardRender)
+    .on('/pcb3d',     renderPcb3d)
+    .on('/live3d',    renderLive3D)
+    .on('/graph',     renderGraph)
+    .on('/stackup',   renderStackup)
+    // Board Tools now live docked inside the PCB Layout tab (km-board-tools-rail) —
+    // redirect any old links/bookmarks straight there instead of a standalone page.
+    .on('/board-tools', () => Router.navigate('/pcb'))
     .on('/bridge',    renderBridge)
-    .on('/settings',  renderSettings)
+    .on('/settings',         renderSettings)
+    .on('/footprint-editor', renderFootprintEditor)
     .start();
 }
 
@@ -146,13 +168,18 @@ function setupSidebarNav() {
     if (!location.hash || location.hash === '#/' || location.hash === '#') {
       renderDashboard();
     }
+    kcvOverlay.reset();
+    _triggerKicanvasPreload();
   });
 
   subscribe('bridgeConnected', (connected) => {
+    _updateBridgeHeaderChip();
     if (connected) {
       notify({ type: 'success', title: 'KiCad Connected', message: 'Bridge plugin active.' });
       // Bridge is the single source of truth — always set project from bridge
       _updateProjectFromBridge(sidebar);
+      // Kick off background KiCanvas parse as soon as bridge connects
+      setTimeout(_triggerKicanvasPreload, 200);
     } else {
       // Clear bridge-sourced project on disconnect
       if (store.project?.source === 'bridge') {
@@ -163,13 +190,17 @@ function setupSidebarNav() {
   });
 
   // Update sidebar project when board name changes (user switches boards in KiCad)
-  subscribe('bridgeBoardName', () => _updateProjectFromBridge(sidebar));
+  subscribe('bridgeBoardName', () => { _updateProjectFromBridge(sidebar); _updateBridgeHeaderChip(); });
+  subscribe('bridgePort', () => _updateBridgeHeaderChip());
 
   // ── DRC violation badge on sidebar nav item ──────────────────────────────
   subscribe('drcErrors', () => {
     const count = errorCount();
     sidebar?.setBadge('drc', count);
   });
+
+  // ── Upcoming: Option B badge — component PDN violations ──────────────────
+  // subscribe('stackupSegmentResults', results => sidebar?.setBadge('stackup', results?.filter(r => !r.pass).length ?? 0));
 
   // ── Auto-DRC when file watcher fires on .kicad_pcb save ──────────────────
   subscribe('projectFileChanged', async (changedFile) => {
@@ -215,30 +246,33 @@ function setupCommandPalette() {
 /** Build the full command palette item list from current app state. */
 function _buildPaletteItems(palette) {
   const routes = [
-    { id: 'nav-dashboard',   label: 'Dashboard',    icon: 'cpu',       description: 'App overview & status',          action: () => Router.navigate('/') },
-    { id: 'nav-drc',         label: 'DRC / ERC',    icon: 'drc',       description: 'Design rule checks',             action: () => Router.navigate('/drc') },
-    { id: 'nav-export',      label: 'Export',       icon: 'gerber',    description: 'Gerbers, PDF, SVG, BOM',         action: () => Router.navigate('/export') },
-    { id: 'nav-components',  label: 'Components',   icon: 'component', description: 'Browse & search board parts',    action: () => Router.navigate('/components') },
-    { id: 'nav-bridge',      label: 'KiCad Bridge', icon: 'plug',      description: 'Live board sync',                action: () => Router.navigate('/bridge') },
-    { id: 'nav-settings',    label: 'Settings',     icon: 'settings',  description: 'Configure KiMaster',             action: () => Router.navigate('/settings') },
-    { id: 'nav-history',     label: 'History',      icon: 'history',   description: 'Git revision timeline + DRC diff', action: () => Router.navigate('/history') },
-    { id: 'nav-schematic',   label: 'Schematic',    icon: 'schematic', description: 'Schematic navigator',              action: () => Router.navigate('/schematic') },
-    { id: 'nav-notes',       label: 'Notes',        icon: 'notes',     description: 'Engineering notes + task list',     action: () => Router.navigate('/notes') },
-    { id: 'nav-vault',       label: 'Component Vault', icon: 'vault',  description: 'LCSC/EasyEDA → KiCad library (native Rust)', action: () => Router.navigate('/vault') },
-    { id: 'nav-render',      label: '3D Render',    icon: 'render',    description: 'Render 3D board views via kicad-cli',          action: () => Router.navigate('/render') },
+    { id: 'nav-dashboard',   label: 'Dashboard',    icon: 'cpu',       description: 'App overview & status',          kind: 'filter', action: () => Router.navigate('/') },
+    { id: 'nav-drc',         label: 'DRC / ERC',    icon: 'drc',       description: 'Design rule checks',             kind: 'filter', action: () => Router.navigate('/drc') },
+    { id: 'nav-export',      label: 'Export',       icon: 'gerber',    description: 'Gerbers, PDF, SVG, BOM',         kind: 'filter', action: () => Router.navigate('/export') },
+    { id: 'nav-components',  label: 'Components',   icon: 'component', description: 'Browse & search board parts',    kind: 'filter', action: () => Router.navigate('/components') },
+    { id: 'nav-bridge',      label: 'KiCad Bridge', icon: 'plug',      description: 'Live board sync',                kind: 'filter', action: () => Router.navigate('/bridge') },
+    { id: 'nav-settings',    label: 'Settings',     icon: 'settings',  description: 'Configure KiMaster',             kind: 'filter', action: () => Router.navigate('/settings') },
+    { id: 'nav-history',     label: 'History',      icon: 'history',   description: 'Git revision timeline + DRC diff', kind: 'filter', action: () => Router.navigate('/history') },
+    { id: 'nav-schematic',   label: 'Schematic',    icon: 'schematic', description: 'Schematic navigator',              kind: 'filter', action: () => Router.navigate('/schematic') },
+    { id: 'nav-notes',       label: 'Notes',        icon: 'notes',     description: 'Engineering notes + task list',     kind: 'filter', action: () => Router.navigate('/notes') },
+    { id: 'nav-vault',       label: 'Component Vault', icon: 'vault',  description: 'LCSC/EasyEDA → KiCad library (native Rust)', kind: 'filter', action: () => Router.navigate('/vault') },
+    { id: 'nav-render',      label: '3D Render',    icon: 'render',    description: 'Render 3D board views via kicad-cli',          kind: 'filter', action: () => Router.navigate('/render') },
+    { id: 'nav-live3d',      label: 'Live 3D',      icon: 'render',    description: 'Photorealistic real-time 3D PCB viewer',       kind: 'filter', action: () => Router.navigate('/live3d') },
+    { id: 'nav-stackup',      label: 'Stackup Manager', icon: 'layers', description: 'Impedance calc, track audit, JLCPCB/PCBWay presets', kind: 'filter', action: () => Router.navigate('/stackup') },
+    { id: 'nav-board-tools',  label: 'Board Tools',     icon: 'pcb',    description: 'Via stitch, teardrops, panelize — docked in PCB Layout', kind: 'filter', action: () => Router.navigate('/pcb') },
   ];
 
   const actions = [
     { id: 'act-run-drc',      label: 'Run DRC',            icon: 'drc',     kbd: ['Shift','D'],
-      description: 'Run design rule check on active project',
+      description: 'Run design rule check on active project', kind: 'action',
       action: () => { Router.navigate('/drc'); }
     },
     { id: 'act-open-project', label: 'Open Project',       icon: 'cpu',
-      description: 'Open a .kicad_pro file',
+      description: 'Open a .kicad_pro file', kind: 'action',
       action: () => pickAndOpenProject().then(r => { if (r.success) renderDashboard(); })
     },
     { id: 'act-settings-appearance', label: 'Appearance Settings', icon: 'settings',
-      description: 'Change accent color, font, density',
+      description: 'Change accent color, font, density', kind: 'action',
       action: () => Router.navigate('/settings')
     },
   ];
@@ -246,26 +280,26 @@ function _buildPaletteItems(palette) {
   if (store.bridgeConnected) {
     actions.push(
       { id: 'act-disconnect', label: 'Disconnect Bridge',  icon: 'plug',
-        description: 'Disconnect from KiCad WS bridge',
+        description: 'Disconnect from KiCad WS bridge', kind: 'action',
         action: () => disconnectBridge().catch(() => {})
       },
       { id: 'act-clear-hl',  label: 'Clear Highlights',    icon: 'drc',
-        description: 'Clear all KiCad highlights',
+        description: 'Clear all KiCad highlights', kind: 'action',
         action: () => clearHighlight().catch(() => {}),
       },
       { id: 'act-regen-zones', label: 'Regenerate Zones',  icon: 'layers',
-        description: 'Re-fill all copper pours (pcbnew.ZONE_FILLER)',
+        description: 'Re-fill all copper pours (pcbnew.ZONE_FILLER)', kind: 'action',
         action: () => _showRegenZonesDialog(),
       },
       { id: 'act-purge-vias',  label: 'Find Orphan Vias',  icon: 'via',
-        description: 'Scan and remove vias with no track or pad connection (dry-run first)',
+        description: 'Scan and remove vias with no track or pad connection (dry-run first)', kind: 'action',
         action: () => _showPurgeViasDialog(),
       },
     );
   } else {
     actions.push({
       id: 'act-connect', label: 'Connect to KiCad', icon: 'plug',
-      description: 'Connect to KiCad bridge plugin',
+      description: 'Connect to KiCad bridge plugin', kind: 'action',
       action: () => Router.navigate('/bridge'),
     });
   }
@@ -284,6 +318,7 @@ function _buildPaletteItems(palette) {
         id:          `comp-${c.ref}`,
         label:       c.ref,
         icon:        'component',
+        kind:        'filter',
         description: `${c.value}  ·  ${c.footprint?.split(':').pop() ?? ''}${c.on_back ? '  ·  Back' : ''}`,
         action: () => {
           Router.navigate('/components');
@@ -302,23 +337,80 @@ function _buildPaletteItems(palette) {
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Pull bridge-related fields out of the saved Settings blob and seed the
+ * reactive store. The Settings panel writes to its own `_settings` object +
+ * localStorage; this is the bridge into the global store so the rest of
+ * the app can react (e.g. main.js decides whether to start auto-connect).
+ */
+function hydrateBridgeSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (typeof saved.bridgePort === 'number')        store.bridgePort        = saved.bridgePort;
+    if (typeof saved.bridgeAutoConnect === 'boolean') store.bridgeAutoConnect = saved.bridgeAutoConnect;
+  } catch (err) {
+    Logger.warn('Boot', 'Could not hydrate bridge settings', err);
+  }
+}
+
 function setupTheme() {
   const saved = localStorage.getItem(THEME) || 'dark';
+  // Seed the store BEFORE the subscriber is attached so the initial
+  // applyTheme call doesn't fire a no-op write, AND so feature code
+  // (e.g. SettingsPanel guards like `if (store.theme === 'light')`) can
+  // read the persisted theme at construction time.
+  store.theme = saved;
   applyTheme(saved);
   subscribe('theme', applyTheme);
 }
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
   localStorage.setItem(THEME, t);
+
+  // Strip any inline --km-bg-app / --km-sidebar-bg left over from a previous
+  // dark-mode session. SettingsPanel.hiContrastDark writes these inline on
+  // <html> in dark mode (so they win over stylesheet rules); if we don't
+  // clear them when crossing to light, the sidebar stays dark and masks
+  // the light theme.
+  if (t === 'light') {
+    document.documentElement.style.removeProperty('--km-bg-app');
+    document.documentElement.style.removeProperty('--km-sidebar-bg');
+  }
 }
 
 // ── Header helpers ────────────────────────────────────────────────────────────
 
 function setHeader(title, icon = '') {
-  document.getElementById('view-header').innerHTML = `
-    <div class="km-view-title">
-      ${icon ? `<km-icon name="${icon}" size="sm" class="km-view-title__icon"></km-icon>` : ''}
-      <span>${esc(title)}</span>
+  // Any non-kicanvas view hides the overlay — kicanvas views call kcvOverlay.show() themselves
+  kcvOverlay.hide();
+  const titleEl = document.getElementById('view-header-title');
+  if (titleEl) {
+    titleEl.innerHTML = `
+      <div class="km-view-title">
+        ${icon ? `<km-icon name="${icon}" size="sm" class="km-view-title__icon"></km-icon>` : ''}
+        <span>${esc(title)}</span>
+      </div>
+    `;
+  }
+}
+
+function _updateBridgeHeaderChip() {
+  const el = document.getElementById('view-header-bridge');
+  if (!el) return;
+  if (!store.bridgeConnected) {
+    el.innerHTML = '';
+    return;
+  }
+  const port = store.bridgePort || 40001;
+  const boardName = store.bridgeBoardName
+    ? store.bridgeBoardName.replace(/\\/g, '/').split('/').pop()
+    : '';
+  el.innerHTML = `
+    <div class="km-header-bridge">
+      <span class="km-header-bridge-port">:${port}</span>
+      ${boardName ? `<span class="km-header-bridge-sep">·</span><span class="km-header-bridge-name" title="${esc(store.bridgeBoardName || '')}">${esc(boardName)}</span>` : ''}
     </div>
   `;
 }
@@ -347,6 +439,20 @@ function renderDrc() {
   c.querySelector('km-drc-panel')?.addEventListener('km-violation-click', (e) => {
     notify({ type: 'info', title: 'Violation', message: e.detail.violation.description });
   });
+}
+
+function renderGraph() {
+  setHeader('Net Graph', 'graph');
+  const c = document.getElementById('view-container');
+  c.style.padding = '0';
+  c.innerHTML = `<km-netlist-graph style="height:100%;"></km-netlist-graph>`;
+}
+
+function renderStackup() {
+  setHeader('Stackup Manager', 'layers');
+  const c = document.getElementById('view-container');
+  c.style.padding = '0';
+  c.innerHTML = `<km-stackup-panel style="height:100%;"></km-stackup-panel>`;
 }
 
 function renderExport() {
@@ -623,17 +729,48 @@ async function _applyMove({ ref, x_mm, y_mm }) {
 
 // ── BRIDGE VIEW ───────────────────────────────────────────────────────────────
 
+/** Last known scan results for the instances tile. null = not yet scanned. */
+let _bridgeInstances = null;
+
 function renderBridge() {
-  setHeader('KiCad Bridge', 'plug');
+  setHeader('KiCad Bridge', 'cable');
   const c = document.getElementById('view-container');
   c.style.padding = '';
   _renderBridgeContent(c);
 
+  // Settings chip in header — gives a one-click jump to port/auto-connect knobs
+  const titleEl = document.getElementById('view-header-title');
+  const chip = document.createElement('a');
+  chip.href = '#/settings';
+  chip.className = 'km-header-bridge-settings';
+  chip.title = 'Bridge settings (port, auto-connect)';
+  chip.innerHTML = '<km-icon name="settings" size="sm"></km-icon><span>Settings</span>';
+  chip.addEventListener('click', (e) => {
+    e.preventDefault();
+    // Pre-select the Bridge category so the user lands on the right section
+    queueMicrotask(() => {
+      const panel = document.querySelector('km-settings-panel');
+      if (panel && panel._activeId !== undefined) {
+        panel._activeId = 'bridge';
+        panel._renderContent('bridge');
+        panel._renderNav?.();
+      }
+    });
+    Router.navigate('/settings');
+  });
+  titleEl?.appendChild(chip);
+
   const unsubs = [
-    subscribe('bridgeConnected',    () => _renderBridgeContent(c)),
+    subscribe('bridgeConnected', (connected) => {
+      // Clear stale scan results when bridge disconnects so reconnect
+      // starts with a fresh scan instead of showing old port data
+      if (!connected) _bridgeInstances = null;
+      _renderBridgeContent(c);
+    }),
     subscribe('boardComponents',    () => _renderBridgeContent(c)),
     subscribe('bridgeKicadVersion', () => _renderBridgeContent(c)),
     subscribe('boardDiag',          () => _renderBridgeContent(c)),
+    subscribe('bridgeServerStopped',() => _renderBridgeContent(c)),
   ];
   const orig = Router.navigate.bind(Router);
   Router.navigate = (p) => { unsubs.forEach(f => f()); Router.navigate = orig; orig(p); };
@@ -641,35 +778,68 @@ function renderBridge() {
 
 function _renderBridgeContent(c) {
   const connected  = store.bridgeConnected;
+  const stopped    = store.bridgeServerStopped;   // user explicitly stopped in KiCad
   const version    = store.bridgeKicadVersion;
   const boardName  = store.bridgeBoardName;
   const components = store.boardComponents || [];
   const nets       = store.boardNets || [];
   const layers     = store.boardLayers || [];
+  const port       = store.bridgePort || 40001;
+
+  // Build instances rows from scan results only (no phantom pre-population)
+  const instRows = _buildInstanceRows(connected, boardName, port);
 
   c.innerHTML = `
     <div class="km-bridge-view">
 
-      <!-- Connection cell -->
+      <!-- ── Connection status cell ── -->
       <div class="km-connection-cell${connected ? ' km-connection-cell--live' : ''}">
-        <div class="km-dot${connected ? ' km-dot--active' : ''}"></div>
+        <div class="km-dot${connected ? ' km-dot--active' : stopped ? ' km-dot--warning' : ''}"></div>
         <div class="km-connection-cell__info">
           <div class="km-connection-cell__status">
-            ${connected ? `Connected to KiCad${version ? ` <span class="km-code">${version}</span>` : ''}` : 'Not connected'}
+            ${connected
+              ? `Connected to KiCad${version ? ` <span class="km-code">${esc(version)}</span>` : ''}`
+              : stopped
+                ? `<span style="color:var(--km-warning)">Server stopped</span>`
+                : 'Not connected'}
           </div>
-          <div class="km-connection-cell__url">ws://127.0.0.1:40001${boardName ? ` · ${boardName}` : ''}</div>
+          <div class="km-connection-cell__url">
+            ${connected
+              ? `ws://127.0.0.1:${port}${boardName ? ` · <span style="color:var(--km-text-secondary)">${esc(boardName.replace(/\\/g,'/').split('/').pop())}</span>` : ''}`
+              : stopped
+                ? `Re-activate the plugin in KiCad: Tools → External Plugins → KiMaster Bridge`
+                : 'Auto-connecting to port 40001–40010…'}
+          </div>
         </div>
         <div class="km-connection-cell__actions">
           ${connected
-            ? `<km-button variant="accent"   size="sm" id="btn-refresh">Refresh</km-button>
-               <km-button variant="ghost"    size="sm" id="btn-disconnect">Disconnect</km-button>`
-            : `<km-button variant="live"     size="sm" id="btn-connect">Connect</km-button>`
+            ? `<km-button variant="secondary" size="sm" id="btn-refresh" icon-only title="Refresh board state (Ctrl+Shift+B)" aria-label="Refresh board state"><km-icon name="rotate-ccw" size="sm"></km-icon></km-button>
+               <km-button variant="secondary" size="sm" id="btn-scan" title="Scan for other running KiCad instances" aria-label="Scan for instances">Scan now</km-button>
+               <km-button variant="danger"  size="sm" id="btn-disconnect">Disconnect</km-button>`
+            : `<km-button variant="live"   size="sm" id="btn-connect">Connect</km-button>
+               <km-button variant="secondary" size="sm" id="btn-scan" title="Scan ports 40001–40010 for a running bridge plugin" aria-label="Scan for instances">Scan now</km-button>`
           }
         </div>
       </div>
 
+      ${_shouldShowInstancesTile(connected, port)
+        ? `<!-- ── KiCad instances tile ── -->
+          <div class="km-instances-cell">
+            <div class="km-cell-header">
+              <km-icon name="monitor" size="sm" class="km-cell-header__icon"></km-icon>
+              <span class="km-cell-header__title">KiCad instances</span>
+              <span id="scan-status" style="font-size:10px;color:var(--km-text-muted);margin-left:auto;"></span>
+            </div>
+            <div id="instances-body">
+              ${instRows || `<div class="km-instances-empty">
+                Click <strong>Scan now</strong> to discover running KiCad instances with the bridge plugin active.
+              </div>`}
+            </div>
+          </div>`
+        : ''}
+
       ${connected ? `
-        <!-- Diagnostics (shown when board data is empty) -->
+        <!-- Diagnostics bar -->
         ${components.length === 0 && (store.boardDiag || []).length > 0 ? `
           <div class="km-diag-bar">
             <strong>Bridge diagnostics:</strong> ${(store.boardDiag || []).join(' · ')}
@@ -687,105 +857,191 @@ function _renderBridgeContent(c) {
         <!-- Board design rules strip -->
         ${_boardStatsStrip(store.boardState)}
 
-        <!-- Board operations -->
-        <div class="km-ops-cell">
-          <div class="km-cell-header">
-            <km-icon name="layers" size="sm" class="km-cell-header__icon"></km-icon>
-            <span class="km-cell-header__title">Board operations</span>
-          </div>
-          <div class="km-ops-row">
-            <km-button variant="secondary" size="sm" id="btn-regen-zones">Regenerate zones…</km-button>
-            <km-button variant="secondary" size="sm" id="btn-purge-vias">Find orphan vias…</km-button>
-            <span class="km-ops-hint">Cleanup ops always run dry-first.</span>
-          </div>
-        </div>
+      ` : ''}
 
-        <!-- Component table -->
-        <div class="km-bridge-table">
-          <div class="km-cell-header">
-            <km-icon name="component" size="sm" class="km-cell-header__icon"></km-icon>
-            <span class="km-cell-header__title">Live Components (${components.length})</span>
-          </div>
-          <div class="km-bridge-table__scroll">
-            <table class="km-table">
-              <thead>
-                <tr>
-                  <th>Ref</th><th>Value</th><th>Footprint</th><th>Side</th><th>⊕</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${components.slice(0, 60).map(comp => `
-                  <tr>
-                    <td>${esc(comp.ref)}</td>
-                    <td class="km-table-value">${esc(comp.value || '—')}</td>
-                    <td class="km-table-fp">${esc(shortFp(comp.footprint))}</td>
-                    <td>${comp.on_back ? 'Back' : 'Front'}</td>
-                    <td class="km-table-hl-col">
-                      <span data-hl="${esc(comp.ref)}" class="km-hl-btn" title="Highlight">⊕</span>
-                    </td>
-                  </tr>
-                `).join('')}
-                ${components.length > 60 ? `<tr><td colspan="5" class="km-table-overflow">… ${components.length - 60} more components</td></tr>` : ''}
-              </tbody>
-            </table>
-          </div>
+      <!-- ── Plugin tile (always visible) ── -->
+      <div class="km-plugin-cell" id="km-plugin-cell">
+        <div class="km-cell-header">
+          <km-icon name="plug" size="sm" class="km-cell-header__icon"></km-icon>
+          <span class="km-cell-header__title">Plugin</span>
         </div>
-      ` : `
-        <!-- Setup guide -->
-        <div class="km-install-card">
-          <div class="km-install-card__title">Setup Instructions</div>
-          <ol>
-            <li>Click <strong>Install Plugin</strong> — copies bridge to your KiCad scripting folder.</li>
-            <li>Restart KiCad or run <strong>Tools → Rescan Plugins</strong>.</li>
-            <li>In KiCad PCB Editor: <strong>Tools → External Plugins → KiMaster Bridge</strong>.</li>
-            <li>Click <strong>Connect</strong> above to establish the connection.</li>
-          </ol>
-          <div class="km-install-card__footer">
-            <km-button variant="secondary" size="sm" id="btn-install">Install Plugin</km-button>
-            <span class="km-install-path" id="install-path"></span>
-          </div>
+        <div id="plugin-slot-bridge" style="padding:var(--km-space-3) var(--km-space-4);">
+          <span style="font-size:11px;color:var(--km-text-muted)">Checking…</span>
         </div>
-      `}
+        <div style="padding:0 var(--km-space-4) var(--km-space-3);font-size:var(--km-font-size-xs);color:var(--km-text-muted)">
+          After installing: restart KiCad → <strong>Tools → External Plugins → KiMaster Bridge</strong>
+        </div>
+      </div>
+
     </div>
   `;
 
-  // Wire
+  // ── Wire connection buttons ─────────────────────────────────────────────
   c.querySelector('#btn-connect')?.addEventListener('km-click', async () => {
     const btn = c.querySelector('#btn-connect');
     btn?.setAttribute('loading', '');
-    await connectBridge(40001).catch(() => {});
+    try {
+      await connectKiCad();
+    } catch (err) {
+      notify({ type: 'error', title: 'Connection failed', message: err.message, duration: 6000 });
+    }
     btn?.removeAttribute('loading');
   });
-  c.querySelector('#btn-disconnect')?.addEventListener('km-click', () => disconnectBridge());
   c.querySelector('#btn-refresh')?.addEventListener('km-click', async () => {
     const btn = c.querySelector('#btn-refresh');
     btn?.setAttribute('loading', '');
     await requestBoardState().catch(() => {});
     btn?.removeAttribute('loading');
   });
-  c.querySelector('#btn-install')?.addEventListener('km-click', async () => {
-    const btn = c.querySelector('#btn-install');
-    btn?.setAttribute('loading', '');
-    const r = await installBridgePlugin().catch(e => ({ success: false, message: String(e) }));
-    btn?.removeAttribute('loading');
-    notify({ type: r.success ? 'success' : 'error', title: r.success ? 'Plugin Installed' : 'Install Failed', message: r.message, duration: r.success ? 7000 : 0 });
-  });
+  c.querySelector('#btn-disconnect')?.addEventListener('km-click', () => disconnectBridge());
 
-  const pathEl = c.querySelector('#install-path');
-  if (pathEl) getPluginInstallPath().then(p => { pathEl.textContent = p; }).catch(() => {});
+  // ── Scan now ────────────────────────────────────────────────────────────
+  c.querySelector('#btn-scan')?.addEventListener('km-click', () => _runBridgeScan(c));
 
-  for (const el of c.querySelectorAll('[data-hl]')) {
-    el.addEventListener('click', () => highlightComponent(el.dataset.hl));
+  // ── Wire per-instance connect / disconnect buttons ──────────────────────
+  _wireInstanceButtons(c);
+
+  // ── Plugin slot ─────────────────────────────────────────────────────────
+  _renderPluginSlotBridge(c);
+}
+
+// ── Instances helpers ────────────────────────────────────────────────────────
+
+/**
+ * Decide whether to render the "KiCad instances" tile.
+ *
+ * Hidden when there's nothing useful to show:
+ *   - never scanned AND already connected (top cell carries the state)
+ *   - scan found exactly one instance AND it IS the current connection
+ *     (would just duplicate the top cell)
+ *
+ * Shown when the user might want to act:
+ *   - not connected (need to scan to find something)
+ *   - scan found 2+ instances (might want to switch)
+ *   - scan found one instance that is NOT the current connection
+ *     (e.g. connected to :40001 manually, scan also found :40005)
+ */
+function _shouldShowInstancesTile(connected, currentPort) {
+  // Connected: hide the tile when there's nothing the user could switch to.
+  //   - never scanned   → top cell already shows the live state, no need
+  //   - scanned, empty  → nothing else to connect to
+  //   - scanned, one == current → just a duplicate of the top cell
+  if (connected) {
+    if (!_bridgeInstances || _bridgeInstances.length === 0) return false;
+    if (_bridgeInstances.length === 1 && _bridgeInstances[0].port === currentPort) return false;
+    return true;
   }
+  // Not connected: show the tile only if a scan has found at least one
+  // instance the user can pick. If nothing's been scanned yet, Scan now
+  // is already in the top cell, so the tile would just be dead weight.
+  if (!_bridgeInstances || _bridgeInstances.length === 0) return false;
+  return true;
+}
 
-  // Phase 12 A8 — Regenerate copper zones
-  c.querySelector('#btn-regen-zones')?.addEventListener('km-click', () => {
-    _showRegenZonesDialog();
-  });
+/**
+ * Build instance row HTML — scan results ONLY.
+ *
+ * The currently-connected instance is omitted from this list; the top
+ * connection cell already shows it. Rows for other instances give a quick
+ * "switch to" affordance.
+ */
+function _buildInstanceRows(connected, boardName, currentPort) {
+  // No scan yet — return empty (the tile shows "Click Scan now" hint)
+  if (!_bridgeInstances) return '';
 
-  // Phase 12 QA5 — Purge orphan vias (dry-run first)
-  c.querySelector('#btn-purge-vias')?.addEventListener('km-click', () => {
-    _showPurgeViasDialog();
+  if (!_bridgeInstances.length) return '';
+
+  return _bridgeInstances
+    .filter(inst => !(connected && inst.port === currentPort))
+    .map(inst => {
+    const proj     = (inst.board_name || '').replace(/\\/g, '/').split('/').pop() || `port ${inst.port}`;
+    const dirPath  = inst.board_name
+      ? inst.board_name.replace(/\\/g, '/').replace(/\/[^/]+$/, '')
+      : '';
+
+    return `
+      <div class="km-instance-row">
+        <div class="km-instance-port">:${inst.port}</div>
+        ${dirPath
+          ? `<button class="km-icon-btn" data-open-dir="${esc(dirPath)}" title="Open folder">
+               <km-icon name="folder-open" size="sm"></km-icon>
+             </button>`
+          : '<div style="width:24px"></div>'}
+        <div class="km-instance-name">
+          <span class="km-instance-proj">${esc(proj)}</span>
+          ${inst.kicad_version ? `<span class="km-instance-ver">KiCad ${esc(inst.kicad_version)}</span>` : ''}
+        </div>
+        <km-button variant="secondary" size="sm" data-connect-port="${inst.port}">Connect</km-button>
+      </div>`;
+  }).join('');
+}
+
+/** Wire per-instance connect/disconnect buttons after DOM update. */
+function _wireInstanceButtons(c) {
+  for (const btn of c.querySelectorAll('[data-connect-port]')) {
+    btn.addEventListener('km-click', async () => {
+      const port = parseInt(btn.dataset.connectPort);
+      btn.setAttribute('loading', '');
+      try {
+        await connectKiCad({ port });
+      } catch (err) {
+        notify({ type: 'error', title: 'Connection failed', message: err.message, duration: 6000 });
+      }
+      btn.removeAttribute('loading');
+    });
+  }
+  for (const btn of c.querySelectorAll('[data-open-dir]')) {
+    btn.addEventListener('click', async () => {
+      const dir = btn.dataset.openDir;
+      if (!dir) return;
+      // Open using the shell (Tauri invoke if available, fallback no-op in browser)
+      try {
+        const { invoke: inv } = await import('./core/Ipc.js');
+        await inv('cmd_open_directory', { path: dir });
+      } catch { /* no-op in browser mode */ }
+    });
+  }
+}
+
+/** Run a port scan and refresh the instances tile in-place (no full re-render). */
+async function _runBridgeScan(c) {
+  const scanBtn  = c.querySelector('#btn-scan');
+  const scanStat = c.querySelector('#scan-status');
+  const body     = c.querySelector('#instances-body');
+
+  if (scanBtn) scanBtn.setAttribute('loading', '');
+  if (scanStat) scanStat.textContent = 'Scanning…';
+
+  try {
+    const { invoke: inv } = await import('./core/Ipc.js');
+    const results = await inv(SCAN_KICAD_INSTANCES);
+    _bridgeInstances = results || [];
+
+    if (scanBtn) scanBtn.removeAttribute('loading');
+    if (scanStat) scanStat.textContent = `${_bridgeInstances.length} found`;
+
+    // If the tile isn't currently rendered (we hid it as redundant), the
+    // scan may have made it relevant — fall back to a full re-render so
+    // the tile appears. Otherwise update the body in-place.
+    if (!body || !document.body.contains(body)) {
+      _renderBridgeContent(c);
+    } else {
+      const rows = _buildInstanceRows(store.bridgeConnected, store.bridgeBoardName, store.bridgePort || 40001);
+      body.innerHTML = rows || `<div class="km-instances-empty">No bridge plugins found on ports 40001–40010.<br>
+        Make sure KiCad is open and the plugin is activated.</div>`;
+      _wireInstanceButtons(c);
+    }
+  } catch (err) {
+    if (scanBtn) scanBtn.removeAttribute('loading');
+    if (scanStat) scanStat.textContent = 'Scan failed';
+    Logger.error('Bridge', 'Scan failed', err);
+  }
+}
+
+/** Render the plugin status slot inside the bridge panel plugin tile. */
+function _renderPluginSlotBridge(c) {
+  return renderPluginSlot({
+    container: c.querySelector('#plugin-slot-bridge'),
   });
 }
 
@@ -1089,14 +1345,25 @@ function renderNotes() {
   // Smart-link clicks in the preview pane → bridge highlight
   c.querySelector('km-notes-editor')?.addEventListener(KM_NOTES_LINK_CLICK, (e) => {
     const { type, ref, net } = e.detail;
+    if (!store.bridgeConnected) {
+      notify({ type: 'error', title: 'Bridge not connected', message: 'Connect the KiCad bridge to highlight components or nets.' });
+      return;
+    }
     if (type === 'ref' && ref) {
-      highlightComponent(ref).catch(err => Logger.warn('Notes', 'Smart-link highlight failed', err));
-      notify({ type: 'info', title: `Highlight ${ref}`, message: 'Component highlighted in KiCad.', duration: 2000 });
+      highlightComponent(ref)
+        .then(() => notify({ type: 'info', title: `Highlight ${ref}`, message: 'Component highlighted in KiCad.', duration: 2000 }))
+        .catch(err => {
+          Logger.warn('Notes', 'Smart-link highlight failed', err);
+          notify({ type: 'error', title: 'Highlight failed', message: String(err?.message ?? err) });
+        });
     } else if (type === 'net' && net) {
       import('./modules/kicad-bridge/BridgeClient.js')
         .then(m => m.highlightNet(net))
-        .catch(err => Logger.warn('Notes', 'Smart-link net highlight failed', err));
-      notify({ type: 'info', title: `Highlight net ${net}`, message: 'Net highlighted in KiCad.', duration: 2000 });
+        .then(() => notify({ type: 'info', title: `Highlight net ${net}`, message: 'Net highlighted in KiCad.', duration: 2000 }))
+        .catch(err => {
+          Logger.warn('Notes', 'Smart-link net highlight failed', err);
+          notify({ type: 'error', title: 'Highlight failed', message: String(err?.message ?? err) });
+        });
     }
   });
 }
@@ -1116,6 +1383,14 @@ function renderVault() {
   });
 }
 
+
+function renderPcb3d() {
+  setHeader('PCB 3D', 'render');
+  const c = document.getElementById('view-container');
+  c.style.padding = '0';
+  c.innerHTML = `<km-pcb3d style="height:100%;"></km-pcb3d>`;
+}
+
 function renderBoardRender() {
   setHeader('3D Render', 'render');
   const c = document.getElementById('view-container');
@@ -1126,8 +1401,45 @@ function renderBoardRender() {
   r?.addEventListener('km-render-error', (e) => notify({ type: 'error',   title: 'Render failed',   message: e.detail.message }));
 }
 
-function renderSchematic()  { placeholder('Schematic', 'schematic', 'Coming in Phase 3 — requires KiCad Bridge.'); }
-function renderPcb()        { placeholder('PCB Layout',  'pcb',       'Coming in Phase 3.'); }
+function renderLive3D() {
+  setHeader('Live 3D', 'render');
+  const c = document.getElementById('view-container');
+  c.style.padding = '0';
+  c.innerHTML = `<km-live-3d style="height:100%;"></km-live-3d>`;
+  const v = c.querySelector('km-live-3d');
+  v?.addEventListener('km-live3d-error', (e) => notify({ type: 'error', title: 'Live 3D error', message: e.detail.message }));
+}
+
+function _toKicanvasSrc(path) {
+  if (!path) return null;
+  return window.__TAURI_INTERNALS__?.convertFileSrc
+    ? window.__TAURI_INTERNALS__.convertFileSrc(path)
+    : 'file:///' + path.replace(/\\/g, '/');
+}
+
+function _triggerKicanvasPreload() {
+  const pcbPath = store.boardState?.board_name ?? store.project?.pcb_file ?? null;
+  if (!pcbPath) return;
+  const pcbSrc = _toKicanvasSrc(pcbPath);
+  const schSrc = _toKicanvasSrc(pcbPath.replace(/\.kicad_pcb$/i, '.kicad_sch'));
+  kcvOverlay.preload(pcbSrc, schSrc);
+}
+
+function renderSchematic() {
+  const pcbPath = store.boardState?.board_name ?? store.project?.pcb_file ?? null;
+  if (!pcbPath) { setHeader('Schematic', 'schematic'); placeholder('Schematic', 'schematic', 'Open a project or connect the KiCad Bridge to view the schematic.'); return; }
+  _triggerKicanvasPreload();
+  setHeader('Schematic', 'schematic');
+  kcvOverlay.show('sch');
+}
+
+function renderPcb() {
+  const pcbPath = store.boardState?.board_name ?? store.project?.pcb_file ?? null;
+  if (!pcbPath) { setHeader('PCB Layout', 'pcb'); placeholder('PCB Layout', 'pcb', 'Open a project or connect the KiCad Bridge to view the PCB layout.'); return; }
+  _triggerKicanvasPreload();
+  setHeader('PCB Layout', 'pcb');
+  kcvOverlay.show('pcb');
+}
 
 function renderComponents() {
   setHeader('Components', 'component');
@@ -1196,18 +1508,16 @@ function renderSettings() {
   c.innerHTML = `<km-settings-panel style="height:100%;"></km-settings-panel>`;
 }
 
+function renderFootprintEditor() {
+  setHeader('Footprint Editor', 'pcb');
+  const c = document.getElementById('view-container');
+  c.style.padding = '0';
+  c.innerHTML = `<km-footprint-editor style="height:100%;"></km-footprint-editor>`;
+}
+
 // ── Notification ──────────────────────────────────────────────────────────────
 
-export function notify({ type = 'info', title = '', message, duration = 4000 }) {
-  const host = document.getElementById('notification-host');
-  if (!host) return;
-  const el = document.createElement('km-notification');
-  el.setAttribute('type', type);
-  if (title)    el.setAttribute('title', title);
-  el.setAttribute('message', message);
-  el.setAttribute('duration', String(duration));
-  host.appendChild(el);
-}
+export { notify } from './core/Notify.js';
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 

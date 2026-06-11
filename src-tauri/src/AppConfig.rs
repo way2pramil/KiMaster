@@ -6,6 +6,15 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const BRIDGE_WS_PORT: u16 = 40_001;
 pub const BRIDGE_WS_CONNECT_TIMEOUT_MS: u64 = 3_000;
 
+/// KiCad 10 default IPC socket name inside the kicad/ temp subdirectory.
+/// Full Windows path: %LOCALAPPDATA%\Temp\kicad\api.sock
+pub const KICAD_IPC_SOCKET_NAME: &str = "api.sock";
+pub const KICAD_IPC_SOCKET_SUBDIR: &str = "kicad";
+/// Environment variable KiCad sets when launching an IPC plugin (full socket path).
+pub const KICAD_IPC_ENV_SOCKET: &str = "KICAD_API_SOCKET";
+/// Environment variable KiCad sets with the instance auth token.
+pub const KICAD_IPC_ENV_TOKEN:  &str = "KICAD_API_TOKEN";
+
 pub const KIMASTER_DIR: &str = ".kimaster";
 
 /// Sub-directory inside Tauri's `app_data_dir` for the global component vault fallback.

@@ -75,13 +75,13 @@
   /* ── Typography — Inter Variable ──────────────────────────────────────── */
   --km-font:            'Geist', 'Inter', -apple-system, system-ui, sans-serif;
   --km-font-mono:       'JetBrains Mono', 'Geist Mono', ui-monospace, monospace;
-  --km-font-size-2xs:   10px;
-  --km-font-size-xs:    11px;
-  --km-font-size-sm:    12px;
-  --km-font-size-base:  13px;
-  --km-font-size-md:    14px;
-  --km-font-size-lg:    16px;
-  --km-font-size-xl:    18px;
+  --km-font-size-2xs:   11px;
+  --km-font-size-xs:    12px;
+  --km-font-size-sm:    13px;
+  --km-font-size-base:  14px;
+  --km-font-size-md:    15px;
+  --km-font-size-lg:    17px;
+  --km-font-size-xl:    20px;
   --km-font-size-2xl:   22px;
   --km-font-size-3xl:   28px;
   --km-font-size-4xl:   36px;
@@ -175,6 +175,41 @@
   --km-scrollbar-width:   4px;
   --km-scrollbar-thumb:   rgba(255, 255, 255, 0.10);
   --km-scrollbar-track:   transparent;
+
+  /* ── Alpha tints — low-opacity layers that need to flip with the theme ──
+   * Used by glass cards, hover washes, dividers, secondary text, and other
+   * "barely there" surfaces. All are 1-channel alpha on the foreground
+   * color (white in dark mode, black in light mode), so the dashboard's
+   * glass / divider / hover styles can reference a single token instead of
+   * baking `rgba(255,255,255,0.04)` and friends into component CSS. */
+  --km-fg:                 255, 255, 255;
+  --km-alpha-018:          rgba(255, 255, 255, 0.018);
+  --km-alpha-02:           rgba(255, 255, 255, 0.02);
+  --km-alpha-042:          rgba(255, 255, 255, 0.042);
+  --km-alpha-04:           rgba(255, 255, 255, 0.04);
+  --km-alpha-05:           rgba(255, 255, 255, 0.05);
+  --km-alpha-055:          rgba(255, 255, 255, 0.055);
+  --km-alpha-06:           rgba(255, 255, 255, 0.06);
+  --km-alpha-07:           rgba(255, 255, 255, 0.07);
+  --km-alpha-075:          rgba(255, 255, 255, 0.075);
+  --km-alpha-08:           rgba(255, 255, 255, 0.08);
+  --km-alpha-10:           rgba(255, 255, 255, 0.10);
+  --km-alpha-13:           rgba(255, 255, 255, 0.13);
+  --km-alpha-15:           rgba(255, 255, 255, 0.15);
+  --km-alpha-18:           rgba(255, 255, 255, 0.18);
+  --km-alpha-20:           rgba(255, 255, 255, 0.20);
+  --km-alpha-25:           rgba(255, 255, 255, 0.25);
+  --km-alpha-30:           rgba(255, 255, 255, 0.30);
+  --km-alpha-40:           rgba(255, 255, 255, 0.40);
+  --km-alpha-45:           rgba(255, 255, 255, 0.45);
+  --km-alpha-50:           rgba(255, 255, 255, 0.50);
+  --km-alpha-55:           rgba(255, 255, 255, 0.55);
+  --km-alpha-60:           rgba(255, 255, 255, 0.60);
+  --km-alpha-70:           rgba(255, 255, 255, 0.70);
+  --km-alpha-85:           rgba(255, 255, 255, 0.85);
+  --km-shadow-card:        rgba(0, 0, 0, 0.35);
+  --km-shadow-card-strong: rgba(0, 0, 0, 0.45);
+  --km-shadow-inset:       rgba(0, 0, 0, 0.25);  --km-shadow-backdrop:     rgba(0, 0, 0, 0.6);  --km-glass-bg:           rgba(12, 12, 16, 0.97);
 }
 
 /* ── Liquid glass — floating overlays, command palette, modals ─────────── */
@@ -193,3 +228,89 @@
 *::-webkit-scrollbar-track  { background: var(--km-scrollbar-track); }
 *::-webkit-scrollbar-thumb  { background: var(--km-scrollbar-thumb); border-radius: var(--km-radius-full); }
 *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * LIGHT THEME
+ * Activated by main.js applying data-theme="light" to <html> when the user
+ * picks "Light" in Settings → Appearance → Color scheme. Mirrors the dark
+ * token surface hierarchy (app / sidebar / primary / surface / elevated /
+ * input) and flips text alphas to dark-on-light. Borders and the bezel
+ * sheen are inverted because the bezel is a white inner edge highlight that
+ * reads as raised on dark but as a smudge on light.
+ * ───────────────────────────────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  /* ── App surfaces — light gray canvas, white cards ──────────────────── */
+  --km-bg-app:          #F4F4F5;   /* app frame */
+  --km-bg-sidebar:      #ECECEE;   /* sidebar */
+  --km-bg-primary:      #FFFFFF;   /* main workspace */
+  --km-bg-secondary:    #FAFAFA;
+  --km-bg-surface:      #FFFFFF;   /* cards, panels */
+  --km-bg-elevated:     #F4F4F5;   /* elevated surfaces, hover targets */
+  --km-bg-input:        #FFFFFF;
+  --km-bg-overlay:      rgba(255, 255, 255, 0.78);
+
+  /* ── Sidebar specifics ─────────────────────────────────────────────── */
+  --km-sidebar-bg:         #ECECEE;
+  --km-sidebar-hover:      rgba(0, 0, 0, 0.04);
+  --km-sidebar-active:     rgba(37, 99, 235, 0.10);
+
+  /* ── Text — alpha hierarchy on light background ────────────────────── */
+  --km-text-primary:    rgba(0, 0, 0, 0.90);
+  --km-text-secondary:  rgba(0, 0, 0, 0.62);
+  --km-text-muted:      rgba(0, 0, 0, 0.40);
+  --km-text-disabled:   rgba(0, 0, 0, 0.22);
+  --km-text-inverse:    #FFFFFF;
+
+  /* ── Borders — dark-edge equivalents (0.07 / 0.10 white → black) ───── */
+  --km-border:          rgba(0, 0, 0, 0.09);
+  --km-border-strong:   rgba(0, 0, 0, 0.14);
+  --km-border-success:  rgba(16, 185, 129, 0.40);
+  --km-border-warning:  rgba(245, 158, 11, 0.40);
+  --km-border-danger:   rgba(239, 68, 68, 0.40);
+
+  /* ── Bezel — invert: a 1px dark inner top edge reads as raised on white */
+  --km-bezel:           inset 0 1px 0 0 rgba(255, 255, 255, 0.55);
+  --km-bezel-strong:    inset 0 1px 0 0 rgba(255, 255, 255, 0.75);
+
+  /* ── Shadows — softer, slightly larger spread on light surfaces ────── */
+  --km-shadow-xs:    0 1px 2px  rgba(15, 23, 42, 0.06);
+  --km-shadow-sm:    0 2px 6px  rgba(15, 23, 42, 0.08);
+  --km-shadow-md:    0 4px 16px rgba(15, 23, 42, 0.10);
+  --km-shadow-lg:    0 8px 32px rgba(15, 23, 42, 0.12);
+  --km-shadow-xl:    0 16px 60px rgba(15, 23, 42, 0.14);
+
+  /* ── Scrollbar ─────────────────────────────────────────────────────── */
+  --km-scrollbar-thumb:   rgba(0, 0, 0, 0.18);
+
+  /* ── Alpha tints — flipped to black-on-white so glass / dividers /
+   *   secondary text on light surfaces keep the same visual weight as
+   *   their dark-mode equivalents. ────────────────────────────────────── */
+  --km-fg:                 0, 0, 0;
+  --km-alpha-018:          rgba(0, 0, 0, 0.018);
+  --km-alpha-02:           rgba(0, 0, 0, 0.02);
+  --km-alpha-042:          rgba(0, 0, 0, 0.042);
+  --km-alpha-04:           rgba(0, 0, 0, 0.04);
+  --km-alpha-05:           rgba(0, 0, 0, 0.05);
+  --km-alpha-055:          rgba(0, 0, 0, 0.055);
+  --km-alpha-06:           rgba(0, 0, 0, 0.06);
+  --km-alpha-07:           rgba(0, 0, 0, 0.07);
+  --km-alpha-075:          rgba(0, 0, 0, 0.075);
+  --km-alpha-08:           rgba(0, 0, 0, 0.08);
+  --km-alpha-10:           rgba(0, 0, 0, 0.10);
+  --km-alpha-13:           rgba(0, 0, 0, 0.13);
+  --km-alpha-15:           rgba(0, 0, 0, 0.15);
+  --km-alpha-18:           rgba(0, 0, 0, 0.18);
+  --km-alpha-20:           rgba(0, 0, 0, 0.20);
+  --km-alpha-25:           rgba(0, 0, 0, 0.25);
+  --km-alpha-30:           rgba(0, 0, 0, 0.30);
+  --km-alpha-40:           rgba(0, 0, 0, 0.40);
+  --km-alpha-45:           rgba(0, 0, 0, 0.45);
+  --km-alpha-50:           rgba(0, 0, 0, 0.50);
+  --km-alpha-55:           rgba(0, 0, 0, 0.55);
+  --km-alpha-60:           rgba(0, 0, 0, 0.60);
+  --km-alpha-70:           rgba(0, 0, 0, 0.70);
+  --km-alpha-85:           rgba(0, 0, 0, 0.85);
+  --km-shadow-card:        rgba(15, 23, 42, 0.08);
+  --km-shadow-card-strong: rgba(15, 23, 42, 0.14);
+  --km-shadow-inset:       rgba(15, 23, 42, 0.20);  --km-shadow-backdrop:     rgba(15, 23, 42, 0.40);  --km-glass-bg:           rgba(255, 255, 255, 0.96);
+}

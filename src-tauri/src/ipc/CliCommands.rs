@@ -202,17 +202,21 @@ pub struct ExportDrillArgs {
     pub pcb_file: String,
     pub output_dir: String,
     #[serde(default)]
-    pub format: Option<String>,    // "excellon" | "gerber"
+    pub format: Option<String>,           // "excellon" | "gerber"
     #[serde(default)]
-    pub units: Option<String>,     // "mm" | "in"
+    pub units: Option<String>,            // "mm" | "in"
     #[serde(default)]
-    pub use_drill_origin: Option<bool>,
+    pub origin: Option<String>,           // "absolute" | "drill_origin"
+    #[serde(default)]
+    pub use_drill_origin: Option<bool>,   // legacy alias for origin
     #[serde(default)]
     pub separate_th: Option<bool>,
     #[serde(default)]
     pub generate_map: Option<bool>,
     #[serde(default)]
     pub map_format: Option<String>,
+    #[serde(default)]
+    pub oval_holes_route: Option<bool>,
 }
 
 #[tauri::command]
@@ -235,7 +239,9 @@ pub async fn cmd_export_drill(
         Some("in") | Some("inches") => ExportRunner::DrillUnits::Inches,
         _ => ExportRunner::DrillUnits::Mm,
     };
-    let origin = if args.use_drill_origin.unwrap_or(false) {
+    let use_drill_file_origin = matches!(args.origin.as_deref(), Some("drill_origin"))
+        || args.use_drill_origin.unwrap_or(false);
+    let origin = if use_drill_file_origin {
         ExportRunner::DrillOrigin::DrillFileOrigin
     } else {
         ExportRunner::DrillOrigin::Absolute
@@ -249,6 +255,7 @@ pub async fn cmd_export_drill(
         separate_th: args.separate_th,
         generate_map: args.generate_map,
         map_format: args.map_format,
+        oval_holes_route: args.oval_holes_route,
     };
 
     ExportRunner::export_drill(&cli_path, &pcb_path, &opts).await
@@ -379,6 +386,10 @@ pub struct ExportPdfArgs {
     pub board_area_only: Option<bool>,
     #[serde(default)]
     pub separate_files: Option<bool>,
+    #[serde(default)]
+    pub scale: Option<f32>,
+    #[serde(default)]
+    pub exclude_drawing_sheet: Option<bool>,
 }
 
 #[tauri::command]
@@ -406,9 +417,10 @@ pub async fn cmd_export_pdf(
         mirror: args.mirror,
         negative: None,
         page_size_mode,
-        exclude_drawing_sheet: None,
+        exclude_drawing_sheet: args.exclude_drawing_sheet,
         black_and_white: args.black_and_white,
         separate_files: args.separate_files,
+        scale: args.scale,
     };
 
     ExportRunner::export_pdf(&cli_path, &pcb_path, &opts).await
@@ -426,6 +438,8 @@ pub struct ExportBomArgs {
     pub group_by: Vec<String>,
     #[serde(default)]
     pub sort_by: Vec<String>,
+    #[serde(default)]
+    pub ref_range_delimiter: Option<String>,
     #[serde(default)]
     pub exclude_dnp: Option<bool>,
 }
@@ -447,6 +461,7 @@ pub async fn cmd_export_bom(
     if !args.fields.is_empty()   { opts.fields = args.fields; }
     if !args.group_by.is_empty() { opts.group_by = args.group_by; }
     if !args.sort_by.is_empty()  { opts.sort_by = args.sort_by; }
+    opts.ref_range_delimiter = args.ref_range_delimiter;
     opts.exclude_dnp = args.exclude_dnp;
 
     ExportRunner::export_bom(&cli_path, &sch_path, &opts).await
@@ -462,6 +477,8 @@ pub struct ExportSchPdfArgs {
     pub theme: Option<String>,
     #[serde(default)]
     pub black_and_white: Option<bool>,
+    #[serde(default)]
+    pub exclude_drawing_sheet: Option<bool>,
 }
 
 #[tauri::command]
@@ -480,7 +497,7 @@ pub async fn cmd_export_sch_pdf(
         output_file: PathBuf::from(&args.output_file),
         theme: args.theme,
         black_and_white: args.black_and_white,
-        exclude_drawing_sheet: None,
+        exclude_drawing_sheet: args.exclude_drawing_sheet,
     };
 
     ExportRunner::export_sch_pdf(&cli_path, &sch_path, &opts).await
@@ -516,6 +533,73 @@ pub async fn cmd_export_sch_svg(
     };
 
     ExportRunner::export_sch_svg(&cli_path, &sch_path, &opts).await
+}
+
+// ── cmd_export_step ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ExportStepArgs {
+    pub pcb_file:    String,
+    pub output_file: String,
+    #[serde(default)] pub format:               Option<String>,
+    #[serde(default)] pub use_drill_origin:     Option<bool>,
+    #[serde(default)] pub use_grid_origin:      Option<bool>,
+    #[serde(default)] pub board_center_origin:  Option<bool>,
+    #[serde(default)] pub user_origin:          Option<String>,
+    #[serde(default)] pub no_board_body:        Option<bool>,
+    #[serde(default)] pub no_components:        Option<bool>,
+    #[serde(default)] pub no_unspecified:       Option<bool>,
+    #[serde(default)] pub no_dnp:               Option<bool>,
+    #[serde(default)] pub subst_models:         Option<bool>,
+    #[serde(default)] pub include_pads:         Option<bool>,
+    #[serde(default)] pub include_tracks:       Option<bool>,
+    #[serde(default)] pub include_zones:        Option<bool>,
+    #[serde(default)] pub include_inner_copper: Option<bool>,
+    #[serde(default)] pub fuse_shapes:          Option<bool>,
+    #[serde(default)] pub fill_all_vias:        Option<bool>,
+    #[serde(default)] pub net_filter:           Option<String>,
+    #[serde(default)] pub force:                Option<bool>,
+    #[serde(default)] pub no_optimize_step:     Option<bool>,
+    #[serde(default)] pub min_distance:         Option<f64>,
+}
+
+#[tauri::command]
+pub async fn cmd_export_step(
+    state: State<'_, KiMasterState>,
+    args: ExportStepArgs,
+) -> Result<ExportResult, String> {
+    let cli_path = resolve_cli(&state)?;
+    let pcb_path = PathBuf::from(&args.pcb_file);
+
+    if !pcb_path.exists() {
+        return Err(format!("PCB file not found: {}", args.pcb_file));
+    }
+
+    let opts = ExportRunner::StepOptions {
+        output_file:          PathBuf::from(&args.output_file),
+        format:               args.format,
+        use_drill_origin:     args.use_drill_origin,
+        use_grid_origin:      args.use_grid_origin,
+        board_center_origin:  args.board_center_origin,
+        user_origin:          args.user_origin,
+        no_board_body:        args.no_board_body,
+        no_components:        args.no_components,
+        no_unspecified:       args.no_unspecified,
+        no_dnp:               args.no_dnp,
+        subst_models:         args.subst_models,
+        include_pads:         args.include_pads,
+        include_tracks:       args.include_tracks,
+        include_zones:        args.include_zones,
+        include_inner_copper: args.include_inner_copper,
+        fuse_shapes:          args.fuse_shapes,
+        fill_all_vias:        args.fill_all_vias,
+        net_filter:           args.net_filter,
+        force:                args.force,
+        no_optimize_step:     args.no_optimize_step,
+        min_distance:         args.min_distance,
+    };
+
+    ExportRunner::export_step(&cli_path, &pcb_path, &opts).await
 }
 
 // ── cmd_export_fab_pack ───────────────────────────────────────────────────────
@@ -843,4 +927,108 @@ pub async fn cmd_render_all_sides(
         failures,
         message,
     })
+}
+
+// ── Live 3D viewer ────────────────────────────────────────────────────────────
+
+/// Read a text file from disk and return its content as a string.
+/// Used by the Live 3D viewer to load .kicad_pcb files for client-side parsing.
+#[tauri::command]
+pub async fn cmd_read_pcb_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("Cannot read file '{}': {}", path, e))
+}
+
+/// Check whether a file exists on disk.
+/// Used by Live 3D viewer to confirm GLB export wrote the file
+/// even when kicad-cli exits with a non-zero code due to warnings.
+#[tauri::command]
+pub async fn cmd_file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[derive(Deserialize)]
+pub struct ExportGlbArgs {
+    pub pcb_file:  String,
+    pub output_file: String,
+    /// Include copper tracks and vias
+    #[serde(default = "bool_true")]
+    pub include_tracks: bool,
+    /// Include SMD/TH pads
+    #[serde(default = "bool_true")]
+    pub include_pads: bool,
+    /// Include copper zones/fills
+    #[serde(default = "bool_true")]
+    pub include_zones: bool,
+    /// Include silkscreen layer
+    #[serde(default = "bool_true")]
+    pub include_silkscreen: bool,
+    /// Include solder mask layers
+    #[serde(default = "bool_true")]
+    pub include_soldermask: bool,
+    /// Cut via drill holes through board body
+    #[serde(default = "bool_true")]
+    pub cut_vias_in_body: bool,
+    /// Substitute STEP models in place of VRML (higher quality)
+    #[serde(default = "bool_true")]
+    pub subst_models: bool,
+    /// Exclude DNP components
+    #[serde(default)]
+    pub no_dnp: bool,
+    /// Skip 3D component model loading (VRML/STEP) — board geometry only.
+    /// This reduces export time from minutes to seconds on complex boards.
+    #[serde(default)]
+    pub no_components: bool,
+}
+
+fn bool_true() -> bool { true }
+
+/// Export a .kicad_pcb as binary GLTF (.glb) via kicad-cli pcb export glb.
+/// Returns the absolute path to the written .glb file.
+/// Requires KiCad 10.0+.
+#[tauri::command]
+pub async fn cmd_export_glb(
+    state: State<'_, KiMasterState>,
+    args: ExportGlbArgs,
+) -> Result<ExportResult, String> {
+    let cli_path = resolve_cli(&state)?;
+    let pcb_path = PathBuf::from(&args.pcb_file);
+
+    if !pcb_path.exists() {
+        return Err(format!("PCB file not found: {}", args.pcb_file));
+    }
+
+    // Ensure output directory exists
+    if let Some(parent) = PathBuf::from(&args.output_file).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create output dir: {}", e))?;
+    }
+
+    let mut cmd_args: Vec<String> = vec![
+        "pcb".into(), "export".into(), "glb".into(),
+        "-f".into(),
+        "-o".into(), args.output_file.clone(),
+    ];
+
+    if args.include_tracks    { cmd_args.push("--include-tracks".into()); }
+    if args.include_pads      { cmd_args.push("--include-pads".into()); }
+    if args.include_zones     { cmd_args.push("--include-zones".into()); }
+    if args.include_silkscreen{ cmd_args.push("--include-silkscreen".into()); }
+    if args.include_soldermask{ cmd_args.push("--include-soldermask".into()); }
+    if args.cut_vias_in_body  { cmd_args.push("--cut-vias-in-body".into()); }
+    if args.subst_models      { cmd_args.push("--subst-models".into()); }
+    if args.no_dnp            { cmd_args.push("--no-dnp".into()); }
+    if args.no_components     { cmd_args.push("--no-components".into()); }
+
+    cmd_args.push(args.pcb_file.clone());
+
+    // CliRunner::run_export expects an output *directory* for its path check.
+    // For GLB we pass the file's parent directory; the actual file path is
+    // provided explicitly to kicad-cli via -o so the result lands correctly.
+    let out_path = PathBuf::from(&args.output_file);
+    let out_dir  = out_path.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    CliRunner::run_export(&cli_path, &cmd_args, &out_dir).await
 }

@@ -8,24 +8,49 @@
 
 import { AnimationKit } from '../../../design/animations/index.js';
 
-const NAV_ITEMS = [
-  { id: 'dashboard',  label: 'Dashboard',   icon: 'cpu',       route: '/' },
-  { id: 'drc',        label: 'DRC / ERC',   icon: 'drc',       route: '/drc' },
-  { id: 'schematic',  label: 'Schematic',   icon: 'schematic', route: '/schematic' },
-  { id: 'pcb',        label: 'PCB Layout',  icon: 'pcb',       route: '/pcb' },
-  { id: 'bom',        label: 'BOM',         icon: 'bom',       route: '/bom' },
-  { id: 'export',     label: 'Export',      icon: 'gerber',    route: '/export' },
-  { id: 'components', label: 'Components',  icon: 'component', route: '/components' },
-  { id: 'history',    label: 'History',     icon: 'history',   route: '/history' },
-  { id: 'notes',      label: 'Notes',       icon: 'notes',     route: '/notes' },
-  { id: 'vault',      label: 'Vault',       icon: 'vault',     route: '/vault' },
-  { id: 'render',     label: '3D Render',   icon: 'render',    route: '/render' },
+const DASHBOARD_ITEM = { id: 'dashboard', label: 'Dashboard', icon: 'cpu', route: '/' };
+
+const NAV_GROUPS = [
+  {
+    id: 'design', label: 'Design',
+    items: [
+      { id: 'schematic', label: 'Schematic', icon: 'schematic', route: '/schematic' },
+      { id: 'pcb',       label: 'PCB Layout', icon: 'pcb',      route: '/pcb' },
+      { id: 'render',    label: '3D Render',  icon: 'render',   route: '/render',   hidden: true },
+      { id: 'live3d',    label: 'Live 3D',    icon: 'render',   route: '/live3d' },
+      { id: 'pcb3d',     label: 'PCB 3D ✦',   icon: 'render',   route: '/pcb3d',    hidden: true },
+      { id: 'drc',         label: 'DRC / ERC',   icon: 'drc',    route: '/drc' },
+      // Board Tools (Via Stitch / Teardrops / Panelize) now dock directly
+      // inside the PCB Layout tab — see km-board-tools-rail in KiCanvasView.
+      { id: 'stackup',          label: 'Stackup',          icon: 'layers',    route: '/stackup' },
+      { id: 'footprint-editor', label: 'Footprint Editor', icon: 'pcb',       route: '/footprint-editor' },
+      { id: 'graph',            label: 'Net Graph',        icon: 'net',        route: '/graph' },
+    ],
+  },
+  {
+    id: 'assets', label: 'Assets',
+    items: [
+      { id: 'components', label: 'Components', icon: 'component', route: '/components' },
+      { id: 'vault',      label: 'Vault',       icon: 'vault',     route: '/vault' },
+      { id: 'bom',        label: 'BOM',         icon: 'bom',       route: '/bom' },
+      { id: 'notes',      label: 'Notes',       icon: 'notes',     route: '/notes' },
+    ],
+  },
+  {
+    id: 'production', label: 'Production',
+    items: [
+      { id: 'export',  label: 'Export',  icon: 'gerber',  route: '/export' },
+      { id: 'history', label: 'History', icon: 'history', route: '/history' },
+    ],
+  },
 ];
 
 const BOTTOM_ITEMS = [
   { id: 'bridge',   label: 'KiCad Bridge', icon: 'plug',     route: '/bridge' },
   { id: 'settings', label: 'Settings',     icon: 'settings', route: '/settings' },
 ];
+
+const LS_KEY = 'km-sidebar-groups-collapsed';
 
 const TEMPLATE = document.createElement('template');
 TEMPLATE.innerHTML = `
@@ -42,6 +67,7 @@ TEMPLATE.innerHTML = `
     transition: width var(--km-duration-slow) var(--km-ease);
     position: relative;
     z-index: var(--km-z-overlay);
+    font-family: var(--km-font);
   }
   :host([collapsed]) { width: var(--km-sidebar-collapsed); }
 
@@ -50,23 +76,24 @@ TEMPLATE.innerHTML = `
     display: flex;
     align-items: center;
     gap: var(--km-space-2-5);
-    padding: 0 var(--km-space-3);
+    padding: 0 var(--km-space-2-5);
     height: var(--km-header-height);
     border-bottom: 1px solid var(--km-border);
     flex-shrink: 0;
     overflow: hidden;
+    position: relative;
   }
   .brand-logo {
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     flex-shrink: 0;
-    border-radius: var(--km-radius-sm);
-    background: var(--km-accent);
     display: flex;
     align-items: center;
     justify-content: center;
+    color: var(--km-accent);
+    transition: color var(--km-duration-base) var(--km-ease);
   }
-  .brand-logo svg { width: 12px; height: 12px; }
+  .brand-logo svg { width: 22px; height: 22px; display: block; }
   .brand-name {
     font-size: var(--km-font-size-sm);
     font-weight: var(--km-font-weight-semibold);
@@ -76,26 +103,39 @@ TEMPLATE.innerHTML = `
     opacity: 1;
     transition: opacity var(--km-duration-base) var(--km-ease);
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  :host([collapsed]) .brand-name { opacity: 0; }
+  :host([collapsed]) .brand-name { opacity: 0; pointer-events: none; }
 
   /* ── Collapse ── */
   .collapse-btn {
+    position: absolute;
+    right: var(--km-space-2);
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
     border-radius: var(--km-radius-xs);
     color: var(--km-text-muted);
     cursor: pointer;
-    flex-shrink: 0;
     transition: color var(--km-duration-fast), background var(--km-duration-fast);
   }
   .collapse-btn:hover { background: var(--km-bg-elevated); color: var(--km-text-secondary); }
+  .collapse-btn:focus-visible { outline: 1px solid var(--km-accent); outline-offset: 1px; }
   .collapse-icon {
     width: 12px;
     height: 12px;
+    display: block;
+    stroke: currentColor;
+    fill: none;
     transition: transform var(--km-duration-slow) var(--km-ease);
   }
   :host([collapsed]) .collapse-icon { transform: rotate(180deg); }
@@ -156,25 +196,51 @@ TEMPLATE.innerHTML = `
   nav:hover { scrollbar-color: var(--km-scrollbar-thumb) transparent; }
 
   .nav-section {
-    font-size: 9px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--km-font-size-2xs);
     font-weight: var(--km-font-weight-semibold);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
     color: var(--km-text-muted);
-    padding: var(--km-space-2) var(--km-space-2-5) var(--km-space-1);
+    padding: var(--km-space-3) var(--km-space-2-5) var(--km-space-1-5);
+    margin-top: var(--km-space-1);
     white-space: nowrap;
     overflow: hidden;
     opacity: 1;
+    cursor: pointer;
+    user-select: none;
     transition: opacity var(--km-duration-fast), height var(--km-duration-fast);
   }
-  :host([collapsed]) .nav-section { opacity: 0; height: 0; padding: 0; }
+  :host([collapsed]) .nav-section { opacity: 0; height: 0; padding: 0; margin-top: 0; pointer-events: none; }
+
+  .nav-section:hover { color: var(--km-text-secondary); }
+
+  .nav-section-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+  .nav-section-chevron {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    transition: transform var(--km-duration-fast) var(--km-ease);
+    color: var(--km-text-muted);
+  }
+  .nav-section.collapsed .nav-section-chevron { transform: rotate(-90deg); }
+
+  .nav-group-items {
+    overflow: hidden;
+    transition: max-height var(--km-duration-base) var(--km-ease);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .nav-group-items.collapsed { max-height: 0 !important; }
 
   .nav-item {
     display: flex;
     align-items: center;
     gap: var(--km-space-2);
     padding: var(--km-space-1-5) var(--km-space-2-5);
-    padding-left: var(--km-space-2);  /* room for left bar */
+    padding-left: var(--km-space-2);
     border-radius: var(--km-radius-sm);
     cursor: pointer;
     color: var(--km-text-secondary);
@@ -194,6 +260,10 @@ TEMPLATE.innerHTML = `
   .nav-item:hover {
     background: var(--km-sidebar-hover);
     color: var(--km-text-primary);
+  }
+  .nav-item:focus-visible {
+    outline: 1px solid var(--km-accent);
+    outline-offset: -1px;
   }
   .nav-item.active {
     background: var(--km-sidebar-active);
@@ -237,9 +307,22 @@ TEMPLATE.innerHTML = `
 
 <div class="brand">
   <div class="brand-logo">
-    <svg viewBox="0 0 12 12" fill="none">
-      <path d="M2 10L6 2l4 8" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M3.5 7h5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+    <svg viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- outer frame -->
+      <rect x="1.5" y="1.5" width="19" height="19" rx="3.5"
+            stroke="currentColor" stroke-width="1.8" fill="none"/>
+      <!-- left pillar of M -->
+      <line x1="6" y1="16" x2="6" y2="6"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <!-- right pillar of M -->
+      <line x1="16" y1="16" x2="16" y2="6"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <!-- left diagonal (top-left → center-V) -->
+      <line x1="6" y1="6" x2="11" y2="11.5"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <!-- right diagonal (top-right → center-V) -->
+      <line x1="16" y1="6" x2="11" y2="11.5"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
     </svg>
   </div>
   <span class="brand-name">KiMaster</span>
@@ -256,7 +339,6 @@ TEMPLATE.innerHTML = `
 </div>
 
 <nav id="main-nav" role="navigation" aria-label="Main navigation">
-  <div class="nav-section">Design</div>
 </nav>
 <div class="divider"></div>
 <div class="bottom" id="bottom-nav"></div>
@@ -274,12 +356,12 @@ export class KmSidebar extends HTMLElement {
     this._collapseBtn = this.shadowRoot.getElementById('collapse-btn');
     this._projectDot  = this.shadowRoot.getElementById('project-dot');
     this._projectName = this.shadowRoot.getElementById('project-name');
+    this._collapsedGroups = new Set(JSON.parse(localStorage.getItem(LS_KEY) || '[]'));
   }
 
   connectedCallback() {
     this._renderNav();
     this._collapseBtn.addEventListener('click', this._onCollapse);
-    // "No project open" pill → dispatch km-open-project so main.js can call pickAndOpenProject
     this.shadowRoot.getElementById('project-indicator')
       ?.addEventListener('click', () => {
         this.dispatchEvent(new CustomEvent('km-open-project', { bubbles: true, composed: true }));
@@ -295,9 +377,66 @@ export class KmSidebar extends HTMLElement {
   }
 
   _renderNav() {
-    for (const item of NAV_ITEMS) this._nav.appendChild(this._makeNavItem(item));
+    this._nav.innerHTML = '';
+    this._nav.appendChild(this._makeNavItem(DASHBOARD_ITEM));
+
+    for (const group of NAV_GROUPS) {
+      const section = this._makeNavSection(group);
+      if (!section.header) continue;
+      this._nav.appendChild(section.header);
+      this._nav.appendChild(section.items);
+    }
+
     this._bottomNav.innerHTML = '';
     for (const item of BOTTOM_ITEMS) this._bottomNav.appendChild(this._makeNavItem(item));
+  }
+
+  _makeNavSection(group) {
+    const visibleItems = group.items.filter((item) => !item.hidden);
+    if (visibleItems.length === 0) return { header: null, items: null };
+
+    const isCollapsed = this._collapsedGroups.has(group.id);
+
+    const header = document.createElement('div');
+    header.className = 'nav-section' + (isCollapsed ? ' collapsed' : '');
+    header.dataset.groupId = group.id;
+    header.innerHTML = `
+      <span class="nav-section-label">${group.label}</span>
+      <svg class="nav-section-chevron" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M2 3.5L5 6.5L8 3.5"/>
+      </svg>
+    `;
+
+    const itemsWrapper = document.createElement('div');
+    itemsWrapper.className = 'nav-group-items' + (isCollapsed ? ' collapsed' : '');
+
+    for (const item of visibleItems) {
+      itemsWrapper.appendChild(this._makeNavItem(item));
+    }
+
+    // Measure real height once items are attached, then animate from there.
+    requestAnimationFrame(() => {
+      const naturalHeight = itemsWrapper.scrollHeight;
+      itemsWrapper.style.maxHeight = isCollapsed ? '0px' : `${naturalHeight}px`;
+    });
+
+    header.addEventListener('click', () => {
+      const collapsed = this._collapsedGroups.has(group.id);
+      if (collapsed) {
+        this._collapsedGroups.delete(group.id);
+        header.classList.remove('collapsed');
+        itemsWrapper.classList.remove('collapsed');
+        itemsWrapper.style.maxHeight = `${itemsWrapper.scrollHeight}px`;
+      } else {
+        this._collapsedGroups.add(group.id);
+        header.classList.add('collapsed');
+        itemsWrapper.classList.add('collapsed');
+        itemsWrapper.style.maxHeight = '0px';
+      }
+      localStorage.setItem(LS_KEY, JSON.stringify([...this._collapsedGroups]));
+    });
+
+    return { header, items: itemsWrapper };
   }
 
   _makeNavItem(item) {

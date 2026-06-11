@@ -2,7 +2,9 @@
 //! Modules must never import from each other to prevent coupling.
 
 pub mod bridge;
+pub mod canvas;
 pub mod cli;
+pub mod kicad_ipc;
 pub mod config;
 pub mod git;
 pub mod notes;

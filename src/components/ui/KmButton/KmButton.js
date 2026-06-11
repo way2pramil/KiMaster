@@ -165,7 +165,7 @@ TEMPLATE.innerHTML = `
 
 export class KmButton extends HTMLElement {
   static get observedAttributes() {
-    return ['variant', 'size', 'loading', 'disabled', 'icon-only'];
+    return ['variant', 'size', 'loading', 'disabled', 'icon-only', 'title', 'aria-label'];
   }
 
   constructor() {
@@ -211,6 +211,14 @@ export class KmButton extends HTMLElement {
       this._spinCancel();
       this._spinCancel = null;
     }
+
+    // Forward tooltip + a11y attrs to the inner button. Critical for
+    // icon-only buttons (no visible text), and for screen readers in
+    // general.
+    const title = this.getAttribute('title');
+    const aria  = this.getAttribute('aria-label');
+    if (title) this._btn.setAttribute('title', title); else this._btn.removeAttribute('title');
+    if (aria)  this._btn.setAttribute('aria-label', aria); else this._btn.removeAttribute('aria-label');
   }
 
   _onPointerDown = (e) => { AnimationKit.ripple(this._btn, e); };

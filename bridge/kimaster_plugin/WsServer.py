@@ -6,16 +6,25 @@ Protocol (JSON messages):
   Client → Server:
     { "type": "hello",              "client": "kimaster", "version": "0.1.0" }
     { "type": "get_board_state" }
+    { "type": "get_schematic_state" }
     { "type": "highlight_component","data": { "ref": "U1" } }
     { "type": "highlight_net",      "data": { "net": "GND" } }
     { "type": "clear_highlight" }
     { "type": "ping" }
 
+  Board-ops (all require board_check in data for write path):
+    { "type": "via_stitch",         "data": { net, via_size_mm, drill_mm, pitch_mm,
+                                               layer_from, layer_to, zone_name, dry_run } }
+    { "type": "apply_teardrops",    "data": { targets, size_ratio, curve_points, dry_run } }
+    { "type": "remove_teardrops",   "data": { board_check } }
+    { "type": "panelize_board",     "data": { cols, rows, gap_mm, rail_mm, dry_run, ... } }
+
   Server → Client:
-    { "type": "hello_ack",       "version": "0.1.0", "board": "...", "kicad_version": "10.0.1",
-                                 "client_count": int }
-    { "type": "board_state",     "data": { ... }  }
-    { "type": "board_changed"                      }
+    { "type": "hello_ack",         "version": "0.1.0", "board": "...", "kicad_version": "10.0.1",
+                                   "client_count": int }
+    { "type": "board_state",       "data": { ... }  }
+    { "type": "schematic_state",   "data": { ... }  }
+    { "type": "board_changed"                        }
     { "type": "selection_changed","data": { "refs": [...], "nets": [...] } }
     { "type": "pong"                               }
     { "type": "error",           "message": "..." }
@@ -28,32 +37,43 @@ Requirements:
 import asyncio
 import json
 import logging
+import os
+import secrets
 import threading
 from typing import Optional, Set
+
+from .ops import ViaStitch, Teardrops, Panelize
 
 _log = logging.getLogger("kimaster.ws")
 
 KIMASTER_HOST       = "127.0.0.1"
 KIMASTER_PORT_START = 40001          # First port to try
 KIMASTER_PORT_END   = 40010          # Last port to try (inclusive)
-KIMASTER_VERSION    = "0.1.0"
+KIMASTER_VERSION    = "0.1.2"   # bumped: fix (thickness N locked) regex for KiCad 10
+# Maximum number of simultaneous clients.  Set to 1 to allow only the
+# KiMaster desktop app.  Rogue / unexpected connections are refused.
+MAX_CLIENTS         = 1
 
 
 class KiMasterWsServer:
     """Manages the asyncio WebSocket server in a dedicated background thread.
 
-    Port auto-discovery: tries KIMASTER_PORT_START → KIMASTER_PORT_END.
-    The first available (un-bound) port wins. This allows multiple KiCad
-    instances to each run their own bridge without port conflicts.
+    Security model:
+    - Binds to 127.0.0.1 ONLY — never accepts external network connections.
+    - Allows at most MAX_CLIENTS=1 simultaneous connection.  Any extra
+      connection attempt is immediately rejected with an error message and
+      the socket is closed.  This prevents other local processes from
+      silently snooping on PCB data.
+    - Every write command is validated against the locked board path
+      (board_check field) before execution.
 
-    Project locking: every write command carries a ``board_check`` field
-    with the absolute path of the PCB file the client expects to be modifying.
-    If it does not match the currently open board, the command is rejected —
-    this prevents accidental changes to the wrong project.
+    Port auto-discovery: tries KIMASTER_PORT_START → KIMASTER_PORT_END so
+    multiple KiCad instances can each run their own bridge.
     """
 
-    def __init__(self, board_exporter):
-        self._exporter = board_exporter
+    def __init__(self, board_exporter, sch_exporter=None):
+        self._exporter     = board_exporter
+        self._sch_exporter = sch_exporter
         self._clients: Set = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
@@ -89,13 +109,26 @@ class KiMasterWsServer:
         _log.info(f"KiMaster WS server starting (will auto-discover port {KIMASTER_PORT_START}–{KIMASTER_PORT_END})")
 
     def stop(self):
-        """Stop the WS server and background thread."""
+        """Gracefully stop the WS server.
+
+        Broadcasts a ``server_stopping`` notice to all connected clients so
+        the KiMaster app can update its UI immediately, then closes the
+        event loop and waits for the background thread to exit.
+        """
+        if not self._running:
+            return
+        # Notify clients before pulling the plug
+        self.broadcast({
+            "type":    "server_stopping",
+            "message": "KiMaster bridge server stopped by user in KiCad.",
+        })
         self._running = False
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread:
             self._thread.join(timeout=3)
-        _log.info("KiMaster WS server stopped")
+        self._clients.clear()
+        _log.info("KiMaster WS server stopped on port %d", self._port)
 
     def is_running(self) -> bool:
         return self._running and (self._thread is not None) and self._thread.is_alive()
@@ -194,15 +227,84 @@ class KiMasterWsServer:
         self._clients -= dead
 
     async def _handler(self, websocket):
-        """Handle a single connected client."""
-        self._clients.add(websocket)
-        _log.info(f"KiMaster: client connected ({self.client_count} total)")
+        """Handle an incoming WebSocket connection.
 
-        # Notify KiCad about client count change
+        Handshake order (new):
+        1. Wait briefly for a ``hello`` message from the client.
+        2a. If ``client == "kimaster-probe"``: respond with hello_ack + metadata,
+            close immediately.  Probe connections are ALWAYS allowed regardless
+            of the MAX_CLIENTS limit — they never receive board data, only
+            enough metadata for the scan to identify the bridge.
+        2b. If it is a real client:
+            - If at capacity → send error, close.
+            - Otherwise → accept, send board_state, enter message loop.
+
+        Why read hello first?
+        Previously the plugin sent board_state immediately on connect, then
+        read messages.  This meant the single-client guard fired BEFORE we
+        could distinguish a probe from a real client.  With MAX_CLIENTS=1, the
+        scan probe was rejected while KiMaster was already connected, producing
+        "0 instances found" even though the bridge was running.
+        """
+        # ── Step 1: read first message (the hello) ────────────────────────
+        first_msg: dict = {}
+        try:
+            raw_first = await asyncio.wait_for(websocket.recv(), timeout=0.8)
+            first_msg = json.loads(raw_first)
+        except (asyncio.TimeoutError, Exception):
+            pass  # no hello within 0.8s — treat as real client with no hello
+
+        msg_type   = first_msg.get("type", "")
+        msg_client = first_msg.get("client", "")
+
+        # ── Step 2a: probe path ───────────────────────────────────────────
+        # Scan probes identify themselves with client="kimaster-probe".
+        # They bypass the capacity check and receive only identification info
+        # (no board data).  They close themselves after receiving hello_ack.
+        if msg_type == "hello" and msg_client == "kimaster-probe":
+            pcb_path  = str(self._exporter.get_board_name())
+            try:
+                import pcbnew as _pb_info
+                kicad_ver = str(_pb_info.GetBuildVersion())
+            except Exception:
+                kicad_ver = "unknown"
+            _log.debug("KiMaster: probe accepted on port %d", self._port)
+            await websocket.send(json.dumps({
+                "type":         "hello_ack",
+                "version":      KIMASTER_VERSION,
+                "pcb_path":     pcb_path,
+                "kicad_version": kicad_ver,
+                "client_count": len(self._clients),
+            }))
+            # Close cleanly — probe has what it needs
+            return
+
+        # ── Step 2b: real client path ─────────────────────────────────────
+        if len(self._clients) >= MAX_CLIENTS:
+            _log.warning(
+                "KiMaster: rejected extra connection (already have %d/%d client(s)). "
+                "Only the KiMaster desktop app may connect.",
+                len(self._clients), MAX_CLIENTS,
+            )
+            await websocket.send(json.dumps({
+                "type":    "error",
+                "message": (
+                    f"Bridge is busy: {len(self._clients)} client(s) connected. "
+                    "Only the KiMaster desktop app is permitted."
+                ),
+            }))
+            return
+
+        self._clients.add(websocket)
+        _log.info("KiMaster: client connected (%d/%d)", self.client_count, MAX_CLIENTS)
         self._update_kicad_status()
 
         try:
-            # Send full board state immediately on connect
+            # Respond to the hello we already read (if there was one)
+            if msg_type == "hello":
+                await self._on_hello(websocket, first_msg)
+
+            # Send full board state
             try:
                 state = self._exporter.get_board_state()
                 await websocket.send(json.dumps({"type": "board_state", "data": state}))
@@ -212,22 +314,20 @@ class KiMasterWsServer:
                     len(state.get("nets", [])),
                 )
             except Exception as e:
-                _log.warning(f"KiMaster: initial board state send failed: {e}")
-                import traceback
-                _log.warning(traceback.format_exc())
+                _log.warning("KiMaster: initial board state send failed: %s", e)
                 await websocket.send(json.dumps({
-                    "type": "error",
-                    "message": f"Board state error: {e}",
+                    "type": "error", "message": f"Board state error: {e}",
                 }))
 
             # Message loop
             async for raw in websocket:
                 await self._handle_message(websocket, raw)
+
         except Exception as e:
-            _log.debug(f"KiMaster WS handler: {e}")
+            _log.debug("KiMaster WS handler: %s", e)
         finally:
             self._clients.discard(websocket)
-            _log.info(f"KiMaster: client disconnected ({self.client_count} remaining)")
+            _log.info("KiMaster: client disconnected (%d remaining)", self.client_count)
             self._update_kicad_status()
 
     async def _handle_message(self, websocket, raw: str):
@@ -244,6 +344,7 @@ class KiMasterWsServer:
         msg_type = msg.get("type", "")
         _log.debug(f"KiMaster ← {msg_type}")
 
+        # ── Read-only / UI commands (no board_check required) ─────────────────
         if msg_type == "hello":
             await self._on_hello(websocket, msg)
         elif msg_type == "get_board_state":
@@ -252,67 +353,76 @@ class KiMasterWsServer:
             self._on_highlight_component(msg.get("data", {}))
         elif msg_type == "highlight_net":
             self._on_highlight_net(msg.get("data", {}))
+        elif msg_type == "clear_highlight":
+            self._on_clear_highlight()
+        elif msg_type == "get_stackup":
+            data = self._on_get_stackup()
+            await websocket.send(json.dumps({"type": "stackup_data", "data": data}))
         elif msg_type == "get_net_info":
             info = self._on_get_net_info(msg.get("data", {}))
             await websocket.send(json.dumps({"type": "net_info", "data": info}))
-        elif msg_type == "regenerate_zones":
-            resp = self._on_regenerate_zones(msg.get("data", {}))
-            await websocket.send(json.dumps({"type": "op_result", "op": "regenerate_zones", **resp}))
-        elif msg_type == "purge_orphan_vias":
-            resp = self._on_purge_orphan_vias(msg.get("data", {}))
-            await websocket.send(json.dumps({"type": "op_result", "op": "purge_orphan_vias", **resp}))
-        elif msg_type == "clear_highlight":
-            self._on_clear_highlight()
+        elif msg_type == "get_schematic_state":
+            await self._on_get_schematic_state(websocket)
         elif msg_type == "ping":
             await websocket.send(json.dumps({"type": "pong"}))
-        elif msg_type == "set_poll_intervals":
-            resp = self._on_set_poll_intervals(msg.get("data", {}))
-            await websocket.send(json.dumps({"type": "poll_intervals", "data": resp}))
         elif msg_type == "get_poll_intervals":
             resp = self._on_get_poll_intervals()
             await websocket.send(json.dumps({"type": "poll_intervals", "data": resp}))
-        # ── Phase 5 write commands ─────────────────────────────────────────────
-        # ALL write commands are project-locked: validated against board_check
-        # before executing. This prevents cross-project writes if multiple KiCad
-        # instances are running or if the user switches boards mid-session.
-        elif msg_type == "move_component":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            resp = guard if guard else self._on_move_component(data)
-            await websocket.send(json.dumps({"type": "op_result", "op": "move_component", **resp}))
-        elif msg_type == "rotate_component":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            resp = guard if guard else self._on_rotate_component(data)
-            await websocket.send(json.dumps({"type": "op_result", "op": "rotate_component", **resp}))
-        elif msg_type == "set_locked":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            resp = guard if guard else self._on_set_locked(data)
-            await websocket.send(json.dumps({"type": "op_result", "op": "set_locked", **resp}))
-        elif msg_type == "set_dnp":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            resp = guard if guard else self._on_set_dnp(data)
-            await websocket.send(json.dumps({"type": "op_result", "op": "set_dnp", **resp}))
-        elif msg_type == "regenerate_zones":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            if guard:
-                await websocket.send(json.dumps({"type": "op_result", "op": "regenerate_zones", **guard}))
-            else:
-                resp = self._on_regenerate_zones(data)
-                await websocket.send(json.dumps({"type": "op_result", "op": "regenerate_zones", **resp}))
-        elif msg_type == "purge_orphan_vias":
-            data = msg.get("data", {})
-            guard = self._check_board(data)
-            if guard:
-                await websocket.send(json.dumps({"type": "op_result", "op": "purge_orphan_vias", **guard}))
-            else:
-                resp = self._on_purge_orphan_vias(data)
-                await websocket.send(json.dumps({"type": "op_result", "op": "purge_orphan_vias", **resp}))
+        elif msg_type == "set_poll_intervals":
+            resp = self._on_set_poll_intervals(msg.get("data", {}))
+            await websocket.send(json.dumps({"type": "poll_intervals", "data": resp}))
+
+        # ── Write commands (all project-locked via _check_board) ──────────────
+        # Every write command must carry board_check in its data payload.
+        # _check_board() rejects the command if the path doesn't match the
+        # currently open board — last line of defence against cross-project writes.
+        elif msg_type in ("move_component", "rotate_component", "set_locked",
+                          "set_dnp", "regenerate_zones", "purge_orphan_vias",
+                          "via_stitch", "apply_teardrops", "remove_teardrops",
+                          "panelize_board"):
+            await self._dispatch_write(websocket, msg_type, msg.get("data", {}))
+
         else:
             _log.debug(f"KiMaster: unhandled message type '{msg_type}'")
+
+    # ── Write command dispatcher ──────────────────────────────────────────────
+
+    async def _dispatch_write(self, websocket, op: str, data: dict):
+        """
+        Central dispatch for all project-locked write commands.
+
+        Runs _check_board() first; on failure sends an op_result error without
+        touching the board.  On success calls the appropriate handler and sends
+        the op_result reply.  Adding a new write command only requires one entry
+        in the dispatch table below — no further branching in _handle_message.
+        """
+        _HANDLERS = {
+            "move_component":    self._on_move_component,
+            "rotate_component":  self._on_rotate_component,
+            "set_locked":        self._on_set_locked,
+            "set_dnp":           self._on_set_dnp,
+            "regenerate_zones":  self._on_regenerate_zones,
+            "purge_orphan_vias": self._on_purge_orphan_vias,
+            # Board-ops (ops/ package)
+            "via_stitch":        self._on_via_stitch,
+            "apply_teardrops":   self._on_apply_teardrops,
+            "remove_teardrops":  self._on_remove_teardrops,
+            "panelize_board":    self._on_panelize_board,
+        }
+
+        _log.debug("KiMaster: dispatch_write op=%s board_check=%r", op, data.get("board_check"))
+
+        guard = self._check_board(data)
+        if guard:
+            _log.debug("KiMaster: dispatch_write op=%s rejected by board guard: %s", op, guard.get("message"))
+            resp = guard
+        else:
+            handler = _HANDLERS[op]
+            resp = handler(data)
+
+        _log.debug("KiMaster: dispatch_write op=%s → op_result success=%s message=%r",
+                   op, resp.get("success"), resp.get("message"))
+        await websocket.send(json.dumps({"type": "op_result", "op": op, **resp}))
 
     # ── Project lock guard ────────────────────────────────────────────────────
 
@@ -424,6 +534,36 @@ class KiMasterWsServer:
                 "message": f"Board state error: {e}",
             }))
 
+    async def _on_get_schematic_state(self, websocket):
+        """Parse the .kicad_sch file and send the result to this client."""
+        if self._sch_exporter is None:
+            await websocket.send(json.dumps({
+                "type": "schematic_state",
+                "data": {
+                    "sch_path": None,
+                    "symbols": [], "components": [], "net_labels": [],
+                    "sheet_count": 0, "no_connect_count": 0,
+                    "error": "SchematicExporter not attached — was the plugin activated on a saved board?",
+                },
+            }))
+            return
+        try:
+            state = self._sch_exporter.get_schematic_state()
+            await websocket.send(json.dumps({"type": "schematic_state", "data": state}))
+            _log.info(
+                "KiMaster: schematic state sent (%d components, %d labels, error=%s)",
+                len(state.get("components", [])),
+                len(state.get("net_labels", [])),
+                state.get("error"),
+            )
+        except Exception as e:
+            import traceback
+            _log.warning("KiMaster: get_schematic_state failed: %s\n%s", e, traceback.format_exc())
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Schematic state error: {e}",
+            }))
+
     def _on_highlight_component(self, data: dict):
         """Highlight a footprint by reference (thread-safe via asyncio)."""
         ref = data.get("ref", "")
@@ -454,6 +594,312 @@ class KiMasterWsServer:
                 pcbnew.Refresh()
         except Exception as e:
             _log.warning(f"KiMaster: highlight_net failed: {e}")
+
+    def _on_get_stackup(self) -> dict:
+        """
+        Extract the live board stackup. Never calls GetStackupDescriptor() —
+        that API is broken on KiCad 10 (returns SwigPyObject).
+
+        Strategy pipeline (first success wins):
+          1. File parse  — reads .kicad_pcb and parses (stackup …) S-expression.
+          2. Synthesize  — builds a stackup from copper count + board thickness.
+                           Source = 'synthesized'; UI shows a warning.
+
+        Returns { board_name, layers, source, warning?, error? }
+        """
+        # ── Get board handle and file path ────────────────────────────────────
+        try:
+            import pcbnew
+            board      = pcbnew.GetBoard()
+            board_name = str(board.GetFileName())
+        except Exception as e:
+            return {"board_name": "", "layers": [], "source": "unavailable",
+                    "error": f"pcbnew unavailable: {e}"}
+
+        err1 = ""   # capture before Python deletes exception bindings
+        err2 = ""
+
+        # ── Strategy 1: parse the .kicad_pcb file directly ───────────────────
+        try:
+            layers = self._stackup_via_file(board_name)
+            if layers:
+                _log.info("KiMaster: stackup extracted from file (%d layers)", len(layers))
+                return {"board_name": board_name, "layers": layers,
+                        "source": "file_parse"}
+        except Exception as e:
+            err1 = str(e)
+            _log.warning("KiMaster: stackup file parse failed: %s", e)
+
+        # ── Strategy 2: synthesize from copper count + board thickness ────────
+        try:
+            layers = self._stackup_synthesize(pcbnew, board)
+            if layers:
+                cu = sum(1 for l in layers if l["layer_type"] == "copper")
+                _log.info("KiMaster: synthesized %d-layer stackup (plugin v%s)",
+                          cu, KIMASTER_VERSION)
+                return {
+                    "board_name": board_name,
+                    "layers":     layers,
+                    "source":     "synthesized",
+                    "warning":    (
+                        "No explicit stackup found in board file — "
+                        "standard FR4 values assumed. "
+                        "For accurate impedance calculations, define the stackup in "
+                        "KiCad → File → Board Setup → Board Stackup."
+                    ),
+                }
+        except Exception as e:
+            err2 = str(e)
+            _log.warning("KiMaster: stackup synthesize failed: %s", e)
+
+        return {
+            "board_name": board_name,
+            "layers":     [],
+            "source":     "unavailable",
+            "error":      f"File parse: {err1 or 'no stackup section'}  |  Synthesize: {err2 or 'unknown'}",
+        }
+
+    # ── File-parse strategy ───────────────────────────────────────────────────
+
+    def _stackup_via_file(self, board_path: str) -> list:
+        """
+        Parse the stackup block from a .kicad_pcb file.
+        Tries keyword 'stackup' (KiCad 6–10) and 'board_stackup' (older formats).
+        Works across all KiCad versions because the S-expression file format is stable.
+        """
+        import os
+
+        if not board_path:
+            raise ValueError("Empty board path")
+
+        # Normalise path separators for Windows
+        norm_path = board_path.replace("\\", "/")
+        if not os.path.isfile(norm_path):
+            # Also try with backslashes on Windows
+            norm_path = board_path.replace("/", "\\")
+            if not os.path.isfile(norm_path):
+                raise FileNotFoundError(
+                    f"Board file not found: {board_path!r} "
+                    f"(also tried: {norm_path!r})"
+                )
+
+        with open(norm_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+
+        # Try both known section keywords
+        stackup_block = ""
+        for keyword in ("stackup", "board_stackup"):
+            stackup_block = self._extract_sexp_block(content, keyword)
+            if stackup_block:
+                _log.debug("KiMaster: found stackup block with keyword %r", keyword)
+                break
+
+        if not stackup_block:
+            _log.debug("KiMaster: no stackup section in %r", board_path)
+            return []
+
+        return self._parse_layers_from_stackup_block(stackup_block)
+
+    def _parse_layers_from_stackup_block(self, stackup_block: str) -> list:
+        """Extract all (layer ...) entries from a stackup S-expression block."""
+        layers = []
+        pos    = 0
+        while True:
+            start = stackup_block.find("(layer ", pos)
+            if start == -1:
+                break
+            block = self._extract_sexp_block(stackup_block[start:], "layer")
+            if not block:
+                pos = start + 6
+                continue
+            pos = start + len(block)
+            try:
+                layer = self._parse_stackup_layer_sexp(block)
+                if layer:
+                    layers.append(layer)
+            except Exception as le:
+                _log.debug("KiMaster: layer parse error: %s", le)
+        return layers
+
+    # ── Synthesize strategy ───────────────────────────────────────────────────
+
+    def _stackup_synthesize(self, pcbnew, board) -> list:
+        """
+        Build a plausible stackup when the board has no explicit stackup section.
+        Uses copper layer count + total board thickness from design settings.
+        Assumes standard FR4 values (Dk 4.6, 1oz outer / 0.5oz inner).
+        """
+        ds             = board.GetDesignSettings()
+        copper_count   = board.GetCopperLayerCount()
+        total_mm       = round(pcbnew.ToMM(ds.GetBoardThickness()), 4)
+        dielectric_count = copper_count - 1   # dielectric layers between copper
+
+        # Copper thickness: 1oz outer, 0.5oz inner
+        cu_outer_mm = 0.035
+        cu_inner_mm = 0.0175
+        total_copper = (
+            2 * cu_outer_mm +
+            max(0, copper_count - 2) * cu_inner_mm
+        )
+        mask_mm = 0.01
+        total_mask = 2 * mask_mm
+
+        # All remaining thickness goes to dielectrics split equally
+        remaining = max(0.1, total_mm - total_copper - total_mask)
+        diel_mm   = round(remaining / max(1, dielectric_count), 4)
+        er        = 4.6
+
+        layers = []
+        layers.append(self._make_layer("silk", "F.Silkscreen", 0.01, "Ink",         0.0, 0.0))
+        layers.append(self._make_layer("mask", "F.Mask",       mask_mm, "Solder Mask", 3.5, 0.0))
+
+        # Enumerate KiCad copper layer names in order
+        cu_names = self._get_copper_layer_names(board, copper_count)
+
+        for i, cu_name in enumerate(cu_names):
+            is_outer = (i == 0 or i == copper_count - 1)
+            cu_t  = cu_outer_mm if is_outer else cu_inner_mm
+            cu_oz = 1.0         if is_outer else 0.5
+            layers.append(self._make_layer("copper", cu_name, cu_t, "Copper", 0.0, cu_oz))
+
+            # Dielectric after each copper layer except the last
+            if i < copper_count - 1:
+                diel_name = f"Core" if copper_count == 2 else f"Dielectric {i + 1}"
+                layers.append(self._make_layer("dielectric", diel_name, diel_mm, "FR4", er, 0.0))
+
+        layers.append(self._make_layer("mask", "B.Mask",       mask_mm, "Solder Mask", 3.5, 0.0))
+        layers.append(self._make_layer("silk", "B.Silkscreen", 0.01,    "Ink",         0.0, 0.0))
+        return layers
+
+    @staticmethod
+    def _get_copper_layer_names(board, copper_count: int) -> list:
+        """Return KiCad copper layer names in stackup order (F.Cu … B.Cu)."""
+        try:
+            import pcbnew as _pb
+            names = []
+            # Standard KiCad layer IDs: F.Cu=0, In1=1…In30=30, B.Cu=31
+            layer_ids = [_pb.F_Cu] + list(range(1, copper_count - 1)) + [_pb.B_Cu]
+            for lid in layer_ids:
+                try:
+                    names.append(str(board.GetLayerName(lid)))
+                except Exception:
+                    names.append(f"Layer{lid}")
+            return names
+        except Exception:
+            # Fallback names
+            if copper_count == 2:
+                return ["F.Cu", "B.Cu"]
+            inner = [f"In{i}.Cu" for i in range(1, copper_count - 1)]
+            return ["F.Cu"] + inner + ["B.Cu"]
+
+    @staticmethod
+    def _extract_sexp_block(text: str, keyword: str) -> str:
+        """
+        Extract the first complete (keyword ...) S-expression block from text,
+        correctly handling nested parentheses.
+        """
+        marker = f"({keyword}"
+        start  = text.find(marker)
+        if start == -1:
+            # Also try with a leading space or newline
+            for prefix in (" ", "\n", "\t"):
+                idx = text.find(f"{prefix}({keyword}")
+                if idx != -1:
+                    start = idx + 1
+                    break
+        if start == -1:
+            return ""
+
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return ""
+
+    @staticmethod
+    def _parse_stackup_layer_sexp(block: str) -> dict:
+        """
+        Parse a single (layer "name" (type "...") (thickness N) ...) block.
+        Returns a StackupLayer dict or None.
+        """
+        import re
+
+        # Layer name — first quoted string after (layer
+        name_m = re.search(r'\(layer\s+"([^"]+)"', block)
+        name   = name_m.group(1) if name_m else ""
+
+        def sexp_str(key):
+            m = re.search(rf'\({key}\s+"([^"]+)"\)', block)
+            return m.group(1) if m else ""
+
+        def sexp_num(key):
+            # KiCad 10 appends extra tokens after values, e.g. (thickness 0.1 locked)
+            # so we match the number without requiring ) immediately after it.
+            m = re.search(rf'\({key}\s+([\d.eE+\-]+)', block)
+            return float(m.group(1)) if m else 0.0
+
+        layer_type_raw = sexp_str("type").lower()
+        thickness_mm   = round(sexp_num("thickness"), 6)
+        material       = sexp_str("material")
+        dk             = round(sexp_num("epsilon_r"), 4)
+
+        # KiCad type strings → our layer_type constants
+        if layer_type_raw == "copper":
+            layer_type = "copper"
+        elif layer_type_raw in ("core", "prepreg") or "dielectric" in layer_type_raw:
+            layer_type = "dielectric"
+        elif "mask" in layer_type_raw:
+            layer_type = "mask"
+        elif "silk" in layer_type_raw:
+            layer_type = "silk"
+        elif "paste" in layer_type_raw:
+            layer_type = "paste"
+        else:
+            layer_type = "dielectric"
+
+        # Skip layers with no thickness (pure logical layers like silkscreen w/ thickness=0)
+        # but keep them — zero thickness is valid for non-physical layers
+        copper_oz = round(thickness_mm / 0.035, 2) if layer_type == "copper" and thickness_mm > 0 else 0.0
+
+        return {
+            "layer_type":   layer_type,
+            "name":         name or layer_type_raw or "Unknown",
+            "thickness_mm": thickness_mm,
+            "material":     material or ("FR4" if layer_type == "dielectric" else ""),
+            "dk":           dk if dk > 0 else (4.6 if layer_type == "dielectric" else 0.0),
+            "copper_oz":    copper_oz,
+        }
+
+    # ── Shared helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _classify_layer_type(type_name: str) -> str:
+        if "copper" in type_name:
+            return "copper"
+        if any(k in type_name for k in ("core", "prepreg", "dielectric")):
+            return "dielectric"
+        if "mask" in type_name:
+            return "mask"
+        if "silk" in type_name:
+            return "silk"
+        if "paste" in type_name:
+            return "paste"
+        return "dielectric"
+
+    @staticmethod
+    def _make_layer(layer_type, name, thickness_mm, material, dk, copper_oz) -> dict:
+        return {
+            "layer_type":   layer_type,
+            "name":         name,
+            "thickness_mm": thickness_mm,
+            "material":     material or ("FR4" if layer_type == "dielectric" else ""),
+            "dk":           dk if dk > 0 else (4.6 if layer_type == "dielectric" else 0.0),
+            "copper_oz":    copper_oz,
+        }
 
     def _on_get_net_info(self, data: dict) -> dict:
         """
@@ -878,3 +1324,51 @@ class KiMasterWsServer:
             "orphans":      orphans[:200],
             "elapsed_ms":   elapsed_ms,
         }
+
+    # ── Board-ops handlers (delegate to ops/ package) ─────────────────────
+
+    def _on_via_stitch(self, data: dict) -> dict:
+        _log.debug("KiMaster: via_stitch invoked, dry_run=%s net=%r",
+                   data.get("dry_run"), data.get("net"))
+        try:
+            import pcbnew
+            board = pcbnew.GetBoard()
+        except Exception as e:
+            _log.warning("KiMaster: via_stitch — pcbnew unavailable: %s", e)
+            return {"success": False, "message": f"pcbnew unavailable: {e}",
+                    "placed": 0, "skipped": 0, "preview": [], "elapsed_ms": 0}
+        resp = ViaStitch(board, self.notify_board_changed).execute(data)
+        _log.debug("KiMaster: via_stitch result success=%s placed=%s skipped=%s preview=%d",
+                   resp.get("success"), resp.get("placed"), resp.get("skipped"),
+                   len(resp.get("preview") or []))
+        return resp
+
+    def _on_apply_teardrops(self, data: dict) -> dict:
+        try:
+            import pcbnew
+            board = pcbnew.GetBoard()
+        except Exception as e:
+            return {"success": False, "message": f"pcbnew unavailable: {e}",
+                    "applied_count": 0, "removed_count": 0,
+                    "kicad_api_used": "unavailable", "elapsed_ms": 0}
+        return Teardrops(board, self.notify_board_changed).execute_apply(data)
+
+    def _on_remove_teardrops(self, data: dict) -> dict:
+        try:
+            import pcbnew
+            board = pcbnew.GetBoard()
+        except Exception as e:
+            return {"success": False, "message": f"pcbnew unavailable: {e}",
+                    "applied_count": 0, "removed_count": 0,
+                    "kicad_api_used": "unavailable", "elapsed_ms": 0}
+        return Teardrops(board, self.notify_board_changed).execute_remove(data)
+
+    def _on_panelize_board(self, data: dict) -> dict:
+        try:
+            import pcbnew
+            board = pcbnew.GetBoard()
+        except Exception as e:
+            return {"success": False, "message": f"pcbnew unavailable: {e}",
+                    "panel_width_mm": 0, "panel_height_mm": 0, "board_count": 0,
+                    "output_path": "", "preview_outline": [], "elapsed_ms": 0}
+        return Panelize(board, self.notify_board_changed).execute(data)

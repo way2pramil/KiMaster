@@ -20,6 +20,7 @@ pub mod KiModGenerator;
 pub mod KiSymGenerator;
 pub mod LcscClient;
 pub mod LibraryVault;
+pub mod LibTableManager;
 pub mod PostProcessor;
 pub mod SanitizerRules;
 pub mod VaultManager;
@@ -43,6 +44,10 @@ pub struct AddToVaultResult {
     pub has_symbol:    bool,
     pub has_footprint: bool,
     pub has_3d_model:  bool,
+    /// True if KiMaster libraries were registered in the project lib tables this call.
+    pub lib_registered: bool,
+    /// True if this was the first registration (sym or fp table was modified).
+    pub lib_registered_first_time: bool,
     /// Pipeline timing breakdown in milliseconds for dev-tools display.
     pub timings:       PipelineTimings,
 }
@@ -294,6 +299,8 @@ pub async fn add_to_vaults(
         has_symbol:    sym_has_content,
         has_footprint: fp_has_content,
         has_3d_model,
+        lib_registered:            false,
+        lib_registered_first_time: false,
         message: format!(
             "Added {} in {}ms (fetch {}ms, model {}ms{})",
             lcsc_id, timings.total_ms, timings.fetch_ms,

@@ -13,3 +13,6 @@ export const THEME    = 'km-theme';
 
 /** Serialised settings object (JSON) */
 export const SETTINGS = 'km-settings';
+
+/** Serialised export profiles array (JSON) */
+export const EXPORT_PROFILES = 'km-export-profiles';

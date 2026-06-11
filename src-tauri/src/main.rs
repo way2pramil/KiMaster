@@ -11,10 +11,25 @@ mod modules;
 
 use AppState::KiMasterState;
 
+// ── Export directory preparation ─────────────────────────────────────────────
+use ipc::ExportCommands::cmd_export_prepare_dir;
+
+// ── Export profile commands ───────────────────────────────────────────────────
+use ipc::ExportProfileCommands::{
+    cmd_list_export_profiles,
+    cmd_load_export_profile,
+    cmd_save_export_profile,
+    cmd_delete_export_profile,
+    cmd_clone_builtin_profile,
+};
+
 // ── Phase 1 commands ─────────────────────────────────────────────────────────
 use ipc::CliCommands::{
     cmd_get_app_info,
     cmd_get_kicad_cli_path,
+    cmd_read_pcb_file,
+    cmd_file_exists,
+    cmd_export_glb,
     cmd_run_drc,
     cmd_run_erc,
     cmd_export_gerbers,
@@ -25,6 +40,7 @@ use ipc::CliCommands::{
     cmd_export_bom,
     cmd_export_sch_pdf,
     cmd_export_sch_svg,
+    cmd_export_step,
     cmd_export_fab_pack,
     cmd_render_pcb,
     cmd_render_all_sides,
@@ -62,6 +78,26 @@ use ipc::UceCommands::{
     cmd_vault_remove_block,
 };
 
+// ── PCB 3D parallel pipeline ──────────────────────────────────────────────────
+use ipc::Pcb3dCommands::{
+    cmd_pcb3d_export_layers,
+    cmd_pcb3d_export_vrml,
+    cmd_pcb3d_export_marketing_glb,
+    cmd_pcb3d_file_exists,
+    cmd_pcb3d_read_file,
+    cmd_pcb3d_list_dir,
+};
+
+// ── Canvas (Phase 1 stubs) ────────────────────────────────────────────────────
+use ipc::CanvasCommands::{
+    cmd_canvas_load_footprint,
+    cmd_canvas_save_footprint,
+    cmd_canvas_pick_footprint,
+    cmd_canvas_load_symbol,
+    cmd_canvas_save_symbol,
+    cmd_canvas_close,
+};
+
 // ── Phase 10 notes commands ───────────────────────────────────────────────────
 use ipc::NotesCommands::{
     cmd_read_notes,
@@ -77,6 +113,19 @@ use ipc::ProjectCommands::{
     cmd_close_project,
     cmd_get_recent_projects,
     cmd_pick_and_open_project,
+    cmd_open_directory,
+};
+
+// ── KiCad IPC API commands ────────────────────────────────────────────────────
+use ipc::IpcCommands::{
+    cmd_ipc_scan,
+    cmd_ipc_connect,
+    cmd_ipc_disconnect,
+    cmd_ipc_get_status,
+    cmd_ipc_get_pcb_data,
+    cmd_ipc_get_schematic_symbols,
+    cmd_ipc_get_schematic_netlist,
+    cmd_get_netlist_graph,
 };
 
 // ── Phase 3 bridge commands ───────────────────────────────────────────────────
@@ -87,11 +136,18 @@ use ipc::BridgeCommands::{
     cmd_bridge_send,
     cmd_bridge_request_board_state,
     cmd_bridge_get_board_state,
+    cmd_bridge_request_schematic_state,
+    cmd_bridge_get_schematic_state,
     cmd_bridge_highlight_component,
     cmd_bridge_highlight_net,
+    cmd_bridge_request_stackup,
     cmd_bridge_request_net_info,
     cmd_bridge_regenerate_zones,
     cmd_bridge_purge_orphan_vias,
+    cmd_bridge_via_stitch,
+    cmd_bridge_apply_teardrops,
+    cmd_bridge_remove_teardrops,
+    cmd_bridge_panelize_board,
     cmd_bridge_clear_highlight,
     cmd_install_bridge_plugin,
     cmd_reinstall_bridge_plugin,
@@ -156,6 +212,13 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // ── Canvas ──
+            cmd_canvas_load_footprint,
+            cmd_canvas_save_footprint,
+            cmd_canvas_pick_footprint,
+            cmd_canvas_load_symbol,
+            cmd_canvas_save_symbol,
+            cmd_canvas_close,
             // ── UCE (Phase 9B) — Components ──
             cmd_uce_search,
             cmd_uce_preview_component,
@@ -178,6 +241,13 @@ fn main() {
             cmd_vault_list_blocks,
             cmd_vault_import_block,
             cmd_vault_remove_block,
+            // ── PCB 3D parallel pipeline ──
+            cmd_pcb3d_export_layers,
+            cmd_pcb3d_export_vrml,
+            cmd_pcb3d_export_marketing_glb,
+            cmd_pcb3d_file_exists,
+            cmd_pcb3d_read_file,
+            cmd_pcb3d_list_dir,
             // ── Notes (Phase 10) ──
             cmd_read_notes,
             cmd_save_notes,
@@ -191,15 +261,28 @@ fn main() {
             // ── App info ──
             cmd_get_app_info,
             cmd_get_kicad_cli_path,
+            // ── Live 3D viewer ──
+            cmd_read_pcb_file,
+            cmd_file_exists,
+            cmd_export_glb,
             // ── Project (Phase 4A) ──
             cmd_get_project_state,
             cmd_open_project,
             cmd_close_project,
             cmd_get_recent_projects,
             cmd_pick_and_open_project,
+            cmd_open_directory,
             // ── DRC / ERC ──
             cmd_run_drc,
             cmd_run_erc,
+            // ── Export directory preparation ──
+            cmd_export_prepare_dir,
+            // ── Export profiles ──
+            cmd_list_export_profiles,
+            cmd_load_export_profile,
+            cmd_save_export_profile,
+            cmd_delete_export_profile,
+            cmd_clone_builtin_profile,
             // ── PCB exports ──
             cmd_export_gerbers,
             cmd_export_drill,
@@ -210,10 +293,20 @@ fn main() {
             cmd_export_bom,
             cmd_export_sch_pdf,
             cmd_export_sch_svg,
+            cmd_export_step,
             cmd_export_fab_pack,
             // ── 3D Render (Phase 11) ──
             cmd_render_pcb,
             cmd_render_all_sides,
+            // ── KiCad IPC API ──
+            cmd_ipc_scan,
+            cmd_ipc_connect,
+            cmd_ipc_disconnect,
+            cmd_ipc_get_status,
+            cmd_ipc_get_pcb_data,
+            cmd_ipc_get_schematic_symbols,
+            cmd_ipc_get_schematic_netlist,
+            cmd_get_netlist_graph,
             // ── Bridge (Phase 3) ──
             cmd_get_bridge_status,
             cmd_bridge_connect,
@@ -221,11 +314,18 @@ fn main() {
             cmd_bridge_send,
             cmd_bridge_request_board_state,
             cmd_bridge_get_board_state,
+            cmd_bridge_request_schematic_state,
+            cmd_bridge_get_schematic_state,
             cmd_bridge_highlight_component,
             cmd_bridge_highlight_net,
+            cmd_bridge_request_stackup,
             cmd_bridge_request_net_info,
             cmd_bridge_regenerate_zones,
             cmd_bridge_purge_orphan_vias,
+            cmd_bridge_via_stitch,
+            cmd_bridge_apply_teardrops,
+            cmd_bridge_remove_teardrops,
+            cmd_bridge_panelize_board,
             cmd_bridge_clear_highlight,
             cmd_install_bridge_plugin,
             cmd_reinstall_bridge_plugin,

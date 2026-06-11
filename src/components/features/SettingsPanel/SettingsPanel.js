@@ -2,18 +2,16 @@
  * @element km-settings-panel
  * @summary Full settings panel — Claude Desktop left-nav + Obsidian section style.
  *
- * Categories: General · KiCad · Bridge · Exports · Appearance · Shortcuts · About
+ * Categories: General · KiCad Bridge · Exports · Appearance · Shortcuts · About
  * Persistence: localStorage (Phase 4 migrates to SQLite)
  */
 
-import { store } from '../../../core/State.js';
+import { store, subscribe } from '../../../core/State.js';
 import { invoke, invokeNow } from '../../../core/Ipc.js';
 import { Logger } from '../../../core/Logger.js';
-import { SETTINGS } from '../../../core/AppKeys.js';
+import { SETTINGS, THEME } from '../../../core/AppKeys.js';
 import {
-  GET_VAULT_DIR, SET_VAULT_DIR,
-  CHECK_PLUGIN_INSTALLED, INSTALL_BRIDGE_PLUGIN,
-  REINSTALL_BRIDGE_PLUGIN, SCAN_KICAD_INSTANCES,
+  GET_VAULT_DIR, SET_VAULT_DIR, SCAN_KICAD_INSTANCES,
 } from '../../../core/AppCommands.js';
 import { AnimationKit } from '../../../design/animations/index.js';
 import { BRIDGE_CONNECTED, BRIDGE_DISCONNECTED, PROJECT_AUTO_DETECTED } from '../../../core/AppEvents.js';
@@ -30,11 +28,10 @@ const DEFAULTS = {
   // KiCad
   kicadCliPath:      '',
   kicadVersion:      'auto',
-  defaultPcbDir:     '',
-  defaultSchDir:     '',
   // Bridge
   bridgePort:        40001,
-  bridgeAutoConnect: false,
+  bridgeAutoConnect: true,
+
   // Exports
   outputDir:         '',
   gerberPrecision:   6,
@@ -67,7 +64,15 @@ const ACCENT_PRESETS = {
 function loadSettings() {
   try {
     const saved = localStorage.getItem(SETTINGS);
-    return saved ? { ...DEFAULTS, ...JSON.parse(saved) } : { ...DEFAULTS };
+    const merged = saved ? { ...DEFAULTS, ...JSON.parse(saved) } : { ...DEFAULTS };
+    // Re-sync the color scheme pill with the live theme so the UI doesn't
+    // briefly show "Dark" selected after a reload, even though the theme
+    // itself is persisted under a separate THEME key by main.js.
+    try {
+      const liveTheme = localStorage.getItem(THEME);
+      if (liveTheme === 'light' || liveTheme === 'dark') merged.colorScheme = liveTheme;
+    } catch { /* localStorage may be blocked — DEFAULTS.colorScheme wins */ }
+    return merged;
   } catch (err) {
     Logger.warn('Settings', 'Could not load saved settings — using defaults', err);
     return { ...DEFAULTS };
@@ -86,8 +91,7 @@ function saveSettings(settings) {
 
 const CATEGORIES = [
   { id: 'general',    label: 'General',     icon: 'settings' },
-  { id: 'kicad',      label: 'KiCad',       icon: 'pcb' },
-  { id: 'bridge',     label: 'Bridge',      icon: 'plug' },
+  { id: 'bridge',     label: 'KiCad Bridge', icon: 'cable' },
   { id: 'exports',    label: 'Exports',     icon: 'gerber' },
   { id: 'appearance', label: 'Appearance',  icon: 'layers' },
   { id: 'shortcuts',  label: 'Shortcuts',   icon: 'search' },
@@ -235,6 +239,7 @@ TEMPLATE.innerHTML = `
 
   /* ── Toggle ── */
   .toggle {
+    display: inline-block;
     position: relative;
     width: 36px;
     height: 20px;
@@ -248,27 +253,51 @@ TEMPLATE.innerHTML = `
     border-radius: var(--km-radius-full);
     background: var(--km-bg-elevated);
     border: 1px solid var(--km-border-strong);
+    box-sizing: border-box;
+    /* The track is a simple block: the thumb is absolutely positioned
+       inside it so the off/on math is exact. The 4px inset on each side
+       of the thumb gives 4px of visible gutter in BOTH states, with the
+       thumb vertically centred by translateY(-50%). */
     transition: background var(--km-duration-fast), border-color var(--km-duration-fast);
   }
   .toggle-thumb {
+    /* Centre math (host 36×20, 1px border, 4px gutter on every visible
+       edge of the track):
+         off  : left = 4px,  right = 36 − 4 − 12 = 20px   (gap 4 / 20)
+         on   : left = 20px, right = 4px                  (gap 20 / 4)
+       Vertical: 12px thumb in 20px host → top = 4px, bottom = 4px. */
     position: absolute;
-    top: 3px;
-    left: 3px;
+    top: 4px;
+    left: 4px;
     width: 12px;
     height: 12px;
     border-radius: 50%;
     background: var(--km-text-muted);
+    transform: translateX(0);
     transition: transform var(--km-duration-compress) var(--km-ease-compress),
                 background var(--km-duration-fast);
+  }
+  .toggle input:checked ~ .toggle-thumb {
+    /* Travel = 36 − 4·2 − 12 = 16px → thumb sits at left=20px,
+       right=4px, perfectly mirroring the off state. */
+    transform: translateX(16px);
+    background: var(--km-accent-hover);
   }
   .toggle input:checked ~ .toggle-track {
     background: var(--km-accent-muted);
     border-color: var(--km-accent-border);
   }
-  .toggle input:checked ~ .toggle-thumb {
-    transform: translateX(16px);
-    background: var(--km-accent-hover);
+
+  /* ── Inline status hint (e.g. bridge port scan result) ── */
+  .setting-hint {
+    font-size: var(--km-font-size-xs);
+    color: var(--km-text-muted);
   }
+  .setting-hint[data-state="in-use"]   { color: var(--km-text-success); }
+  .setting-hint[data-state="free"]     { color: var(--km-text-muted); }
+  .setting-hint[data-state="mismatch"] { color: var(--km-text-warning); }
+  .setting-hint[data-state="error"]    { color: var(--km-text-danger); }
+  .setting-hint[data-state="pending"]  { color: var(--km-text-muted); opacity: 0.7; }
 
   /* ── Select ── */
   .km-select {
@@ -295,6 +324,18 @@ TEMPLATE.innerHTML = `
   .km-select:hover  { border-color: var(--km-border-strong); }
   .km-select:focus  { border-color: var(--km-accent); box-shadow: var(--km-bezel), 0 0 0 2px var(--km-accent-muted); }
   .km-select option { background: var(--km-bg-elevated); color: var(--km-text-primary); }
+  /* Native <option> popups inherit document colors and ignore our
+     shadow-DOM data-theme. Force the UA to use light/dark form widgets to
+     match the surrounding surface. */
+  :host([data-theme="light"]) .km-select,
+  :host-context(html[data-theme="light"]) .km-select {
+    color-scheme: light;
+  }
+  .km-select { color-scheme: dark; }
+  /* Chevron stroke reads as ~30% white-on-dark; on light it disappears. */
+  :host-context(html[data-theme="light"]) .km-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='rgba(0,0,0,0.35)' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
 
   /* ── Text input ── */
   .km-input {
@@ -470,15 +511,44 @@ export class SettingsPanel extends HTMLElement {
     this._renderContent(this._activeId);
     this._loadVaultDirs();
     this._initEventListeners();
+
+    // main.js clears the hi-contrast inline --km-bg-app / --km-sidebar-bg
+    // when crossing into light mode (so stylesheet rules can take over).
+    // If the user toggles back to dark, we need to re-write those inline
+    // values — otherwise the bg quietly loses its OLED-black variant.
+    this._unlisten.push(subscribe('theme', () => {
+      this._applyHiContrastInline(this._settings.hiContrastDark);
+    }));
   }
 
   _applyAllSettings() {
     const s = this._settings;
+    // Strip any stale inline bg values that a previous dark-mode mount may
+    // have left on <html>. The actual hi-contrast values get re-applied
+    // below if the current theme is dark.
+    if (store.theme === 'light') {
+      document.documentElement.style.removeProperty('--km-bg-app');
+      document.documentElement.style.removeProperty('--km-sidebar-bg');
+    }
     if (s.accentPreset)    this._applyAccent(s.accentPreset);
     if (s.interfaceFont)   this._save('interfaceFont',   s.interfaceFont);
     if (s.interfaceScale)  this._save('interfaceScale',  s.interfaceScale);
     if (s.contentDensity)  this._save('contentDensity',  s.contentDensity);
-    if (s.hiContrastDark !== undefined) this._save('hiContrastDark', s.hiContrastDark);
+    if (s.hiContrastDark !== undefined) this._applyHiContrastInline(s.hiContrastDark);
+  }
+
+  _applyHiContrastInline(enabled) {
+    // Inline styles win over stylesheet rules. Only write them in dark mode;
+    // light mode reads bg-app / sidebar-bg straight from tokens.css.
+    // main.js clears these on light-toggle; we re-apply them on dark-toggle.
+    const root = document.documentElement;
+    if (store.theme === 'light') {
+      root.style.removeProperty('--km-bg-app');
+      root.style.removeProperty('--km-sidebar-bg');
+      return;
+    }
+    root.style.setProperty('--km-bg-app',     enabled ? '#000000' : '#0a0a0b');
+    root.style.setProperty('--km-sidebar-bg', enabled ? '#000000' : '#0a0a0b');
   }
 
   disconnectedCallback() {
@@ -542,7 +612,6 @@ export class SettingsPanel extends HTMLElement {
     const el = this.shadowRoot.getElementById('settings-content');
     const map = {
       general:    () => this._renderGeneral(),
-      kicad:      () => this._renderKiCad(),
       bridge:     () => this._renderBridge(),
       exports:    () => this._renderExports(),
       appearance: () => this._renderAppearance(),
@@ -612,13 +681,13 @@ export class SettingsPanel extends HTMLElement {
     `;
   }
 
-  _renderKiCad() {
+  _renderBridge() {
     const s = this._settings;
     const cliPath = store.kicadCliPath || s.kicadCliPath || '';
     return `
       <div class="section">
-        <div class="section-title">KiCad</div>
-        <div class="section-desc">KiCad installation paths and version preferences.</div>
+        <div class="section-title">KiCad Bridge</div>
+        <div class="section-desc">KiCad installation, version preferences, and the WebSocket link to the Python plugin. For live status, scan results, and plugin management, open the <a href="#/bridge" id="link-open-bridge">Bridge monitor</a> in the sidebar.</div>
 
         <div class="group">
           <div class="group-title">CLI Binary</div>
@@ -633,20 +702,6 @@ export class SettingsPanel extends HTMLElement {
         </div>
 
         <div class="group">
-          <div class="group-title">Default Paths</div>
-          ${this._row('Default PCB directory', 'Starting directory for PCB file pickers.', `
-            <div class="path-row">
-              <input class="km-input" type="text" data-key="defaultPcbDir" placeholder="Auto (last used)..." value="${esc(s.defaultPcbDir)}">
-            </div>
-          `, true)}
-          ${this._row('Default schematic directory', 'Starting directory for schematic file pickers.', `
-            <div class="path-row">
-              <input class="km-input" type="text" data-key="defaultSchDir" placeholder="Auto (last used)..." value="${esc(s.defaultSchDir)}">
-            </div>
-          `, true)}
-        </div>
-
-        <div class="group">
           <div class="group-title">Version</div>
           ${this._row('KiCad version target', 'Used to resolve library paths and API compatibility.', `
             <select class="km-select" data-key="kicadVersion">
@@ -656,55 +711,19 @@ export class SettingsPanel extends HTMLElement {
             </select>
           `)}
         </div>
-      </div>
-    `;
-  }
-
-  _renderBridge() {
-    const s = this._settings;
-    const connected = store.bridgeConnected;
-    return `
-      <div class="section">
-        <div class="section-title">KiCad Bridge</div>
-        <div class="section-desc">WebSocket connection between KiMaster and the KiCad PCB editor.</div>
 
         <div class="group">
           <div class="group-title">Connection</div>
-          ${this._row('Status', 'Live connection state with the KiCad Python plugin.', `
-            <span class="${connected ? 'status-ok' : 'status-warn'}">${connected ? '● Connected' : '○ Not connected'}</span>
-          `)}
           ${this._row('WebSocket port', 'Port the KiMaster Python plugin listens on (auto-discovered 40001–40010).', `
-            <div style="display:flex;align-items:center;gap:6px;">
-              <input class="km-input-num" type="number" data-key="bridgePort" value="${s.bridgePort}" min="1024" max="65535">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input id="bridge-port-input" class="km-input-num" type="number" data-key="bridgePort" value="${s.bridgePort}" min="1024" max="65535">
+              <km-button id="btn-check-port" variant="secondary" size="sm" title="Scan ports 40001–40010 for a running bridge plugin">Check</km-button>
             </div>
+            <div id="bridge-port-status" class="setting-hint" style="margin-top:6px;line-height:1.45;"></div>
           `)}
           ${this._row('Auto-connect on project open', 'Automatically connect to the bridge when a project loads.', `
             ${this._toggle('bridgeAutoConnect', s.bridgeAutoConnect)}
           `)}
-        </div>
-
-        <div class="group">
-          <div class="group-title">Running KiCad instances</div>
-          <div class="group-desc" style="padding:0 var(--km-space-4) var(--km-space-2);font-size:var(--km-font-size-xs);color:var(--km-text-muted)">
-            KiMaster works with one KiCad project at a time. Each KiCad window with the bridge plugin
-            active automatically gets its own port (40001, 40002, …). Scan to see which are available.
-          </div>
-          ${this._row('Scan for instances', 'Scan ports 40001–40010 for active KiMaster bridge plugins.', `
-            <km-button variant="secondary" size="sm" id="btn-scan-instances">Scan now</km-button>
-          `)}
-          <div id="instances-list" style="padding:0 var(--km-space-4) var(--km-space-2);"></div>
-        </div>
-
-        <div class="group">
-          <div class="group-title">Plugin</div>
-          <!-- Single smart slot: shows install status + one action + inline result -->
-          <div id="plugin-slot" style="padding:var(--km-space-3) var(--km-space-4);">
-            <div style="font-size:var(--km-font-size-xs);color:var(--km-text-muted)">Checking…</div>
-          </div>
-          <div id="plugin-result" style="display:none;padding:0 var(--km-space-4) var(--km-space-3);font-size:var(--km-font-size-xs);"></div>
-          <div style="padding:var(--km-space-1) var(--km-space-4) var(--km-space-3);font-size:var(--km-font-size-xs);color:var(--km-text-muted)">
-            After installing: restart KiCad → <strong>Tools → External Plugins → KiMaster Bridge</strong>
-          </div>
         </div>
       </div>
     `;
@@ -1052,94 +1071,8 @@ export class SettingsPanel extends HTMLElement {
       });
     }
 
-    // ── Smart plugin slot ─────────────────────────────────────────────────
-    // Load plugin status and render the single smart row
-    this._refreshPluginSlot(root);
-
-    // Helper: show inline result + toast notification
-    const showPluginResult = (root, success, message) => {
-      const el = root.getElementById('plugin-result');
-      if (!el) return;
-      el.style.display = 'block';
-      el.innerHTML = success
-        ? `<span style="color:var(--km-trace)">✓ ${esc(message)}</span>`
-        : `<span style="color:var(--km-red)">✗ ${esc(message)}</span>`;
-      this._notify(success ? 'success' : 'error',
-        success ? 'Plugin ready' : 'Plugin install failed', message);
-      // Refresh slot to reflect new install state
-      this._refreshPluginSlot(root);
-    };
-
-    // Scan for KiCad instances
-    root.getElementById('btn-scan-instances')?.addEventListener('km-click', async () => {
-      const btn    = root.getElementById('btn-scan-instances');
-      const list   = root.getElementById('instances-list');
-      if (btn)  btn.setAttribute('loading', '');
-      if (list) list.innerHTML = '<span style="font-size:11px;color:var(--km-text-muted)">Scanning…</span>';
-      try {
-        const instances = await invoke(SCAN_KICAD_INSTANCES);
-        if (btn) btn.removeAttribute('loading');
-        if (!list) return;
-
-        if (!instances?.length) {
-          list.innerHTML = `
-            <div style="font-size:11px;color:var(--km-text-muted);padding:4px 0">
-              No bridge plugins found on ports 40001–40010.<br>
-              Make sure KiCad is open and the KiMaster Bridge plugin is activated.
-            </div>`;
-          return;
-        }
-
-        if (instances.length === 1) {
-          const i = instances[0];
-          list.innerHTML = `
-            <div style="font-size:11px;color:var(--km-trace);padding:4px 0">
-              ✓ 1 instance found on port ${i.port}${i.board_name ? ` — ${i.board_name.split(/[\\/]/).pop()}` : ''}
-              ${i.kicad_version ? `<span style="color:var(--km-text-muted)"> · KiCad ${i.kicad_version}</span>` : ''}
-            </div>`;
-          return;
-        }
-
-        // Multiple instances — show picker
-        list.innerHTML = `
-          <div style="font-size:11px;color:var(--km-warning);padding:4px 0 8px">
-            ${instances.length} KiCad instances found. Select one for KiMaster to work with:
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;">
-            ${instances.map(i => {
-              const bname = i.board_name ? i.board_name.split(/[\\/]/).pop() : `port ${i.port}`;
-              return `
-                <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;
-                            background:var(--km-bg-elevated);border-radius:6px;
-                            border:1px solid var(--km-border);cursor:pointer;"
-                     data-connect-port="${i.port}" class="instance-pick-row">
-                  <span style="font-family:var(--km-font-mono);font-size:10px;color:var(--km-text-muted);flex-shrink:0">:${i.port}</span>
-                  <span style="font-size:12px;font-weight:500;flex:1">${esc(bname)}</span>
-                  ${i.kicad_version ? `<span style="font-size:10px;color:var(--km-text-muted)">${esc(i.kicad_version)}</span>` : ''}
-                  <km-button variant="primary" size="sm" data-port="${i.port}">Connect</km-button>
-                </div>`;
-            }).join('')}
-          </div>`;
-
-        // Wire connect buttons
-        for (const row of list.querySelectorAll('[data-connect-port]')) {
-          row.querySelector('km-button')?.addEventListener('km-click', async () => {
-            const port = parseInt(row.dataset.connectPort);
-            try {
-              const { connectBridge } = await import('../../../modules/kicad-bridge/BridgeClient.js');
-              await connectBridge(port);
-              this._notify('success', 'Connecting', `Connecting to KiCad on port ${port}…`);
-            } catch (err) {
-              Logger.error('Settings', 'connect to instance failed', err);
-            }
-          });
-        }
-      } catch (err) {
-        if (btn) btn.removeAttribute('loading');
-        if (list) list.innerHTML = `<span style="font-size:11px;color:var(--km-red)">Scan failed: ${esc(String(err))}</span>`;
-        Logger.error('Settings', 'scan instances failed', err);
-      }
-    });
+    // (Bridge page is opened from this tab via the standard #/bridge hash link
+    //  — the global hash router picks it up automatically.)
 
     // Change global vault directory
     root.getElementById('btn-change-vault-dir')?.addEventListener('km-click', async () => {
@@ -1170,9 +1103,47 @@ export class SettingsPanel extends HTMLElement {
         this._renderContent(this._activeId);
       }
     });
+
+    // Bridge: scan 40001–40010 for a live plugin, show which port (if any) the user's chosen port is on
+    root.getElementById('btn-check-port')?.addEventListener('km-click', () => this._checkBridgePort());
+  }
+
+  async _checkBridgePort() {
+    const root = this.shadowRoot;
+    const statusEl = root.getElementById('bridge-port-status');
+    if (!statusEl) return;
+    statusEl.textContent = 'Scanning 40001–40010…';
+    statusEl.dataset.state = 'pending';
+    try {
+      const instances = await invokeNow(SCAN_KICAD_INSTANCES);
+      const target = this._settings.bridgePort;
+      const onTarget = instances.find(i => i.port === target);
+      if (instances.length === 0) {
+        statusEl.textContent = `No plugin is listening. Port ${target} is free. Open KiCad and activate Tools → External Plugins → KiMaster Bridge.`;
+        statusEl.dataset.state = 'free';
+      } else if (onTarget) {
+        statusEl.textContent = `Port ${target} is in use by ${onTarget.app || 'a KiCad bridge plugin'} (KiCad ${onTarget.kicad_version || '?'}). Auto-connect will succeed.`;
+        statusEl.dataset.state = 'in-use';
+      } else {
+        const ports = instances.map(i => i.port).join(', ');
+        statusEl.textContent = `Port ${target} is free, but the plugin is running on: ${ports}. Update the port above or stop the other instance.`;
+        statusEl.dataset.state = 'mismatch';
+      }
+    } catch (err) {
+      Logger.error('Settings', err, 'Bridge port scan failed');
+      statusEl.textContent = `Scan failed: ${String(err)}`;
+      statusEl.dataset.state = 'error';
+    }
   }
 
   _save(key, value) {
+    // Mirror the change into the panel's own _settings object FIRST so the
+    // subsequent persist call writes the *new* value to localStorage. Then
+    // apply the side-effect to the runtime store / DOM tokens. (Previous
+    // order called saveSettings before _settings was updated, so toggles
+    // never persisted across reloads — main.js would hydrate the stale
+    // value on next boot and re-start auto-connect against the user's wish.)
+    this._settings[key] = value;
     saveSettings(this._settings);
     const root = document.documentElement;
 
@@ -1181,10 +1152,10 @@ export class SettingsPanel extends HTMLElement {
         store.theme = value;
         break;
 
-      case 'hiContrastDark':
-        root.style.setProperty('--km-bg-app',     value ? '#000000' : '#0a0a0b');
-        root.style.setProperty('--km-sidebar-bg', value ? '#000000' : '#0a0a0b');
+      case 'hiContrastDark': {
+        this._applyHiContrastInline(value);
         break;
+      }
 
       case 'interfaceFont': {
         const fonts = {
@@ -1197,10 +1168,14 @@ export class SettingsPanel extends HTMLElement {
       }
 
       case 'interfaceScale': {
+        // Calibrated against modern desktop apps (2024-2026):
+        //   Linear       13px base · Vercel 14px · GitHub 14px · Notion 16px · Arc 14px
+        //   Apple HIG    13px min · Microsoft Fluent 2  14px base
+        // Each step is +1px on body, +1px on small captions, +2px on display sizes.
         const scaleMap = {
-          small:   { '2xs': '9px',  xs: '10px', sm: '11px', base: '12px', md: '13px', lg: '14px', xl: '16px' },
-          default: { '2xs': '10px', xs: '11px', sm: '12px', base: '13px', md: '14px', lg: '16px', xl: '18px' },
-          large:   { '2xs': '11px', xs: '12px', sm: '13px', base: '14px', md: '15px', lg: '18px', xl: '20px' },
+          small:   { '2xs': '10px', xs: '11px', sm: '12px', base: '13px', md: '14px', lg: '16px', xl: '18px' },
+          default: { '2xs': '11px', xs: '12px', sm: '13px', base: '14px', md: '15px', lg: '17px', xl: '20px' },
+          large:   { '2xs': '12px', xs: '13px', sm: '14px', base: '15px', md: '16px', lg: '19px', xl: '22px' },
         };
         const s = scaleMap[value] || scaleMap.default;
         root.style.setProperty('--km-font-size-2xs',  s['2xs']);
@@ -1224,6 +1199,14 @@ export class SettingsPanel extends HTMLElement {
       case 'debugLogging':
         console.info('[Settings] Debug logging:', value);
         break;
+
+      case 'bridgePort':
+        store.bridgePort = value;
+        break;
+
+      case 'bridgeAutoConnect':
+        store.bridgeAutoConnect = value;
+        break;
     }
   }
 
@@ -1245,83 +1228,6 @@ export class SettingsPanel extends HTMLElement {
       bubbles: true, composed: true,
       detail: { type, title, message },
     }));
-  }
-
-  /**
-   * Load plugin status and render the smart single-row plugin slot.
-   * Shows: install path + status badge + one context-appropriate action button.
-   * Wires the action button internally via event delegation.
-   */
-  async _refreshPluginSlot(root) {
-    const slot   = root ? root.getElementById('plugin-slot') : null;
-    const result = root ? root.getElementById('plugin-result') : null;
-    if (!slot) return;
-
-    slot.innerHTML = '<div style="font-size:11px;color:var(--km-text-muted)">Checking…</div>';
-
-    try {
-      const status = await invoke(CHECK_PLUGIN_INSTALLED);
-      const pathShort = (status.install_path || '').replace(/\\/g, '\\').split('\\').slice(-3).join('\\');
-
-      if (status.installed) {
-        slot.innerHTML = `
-          <div style="display:flex;align-items:flex-start;gap:var(--km-space-3);">
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:var(--km-font-size-sm);font-weight:var(--km-font-weight-medium);">Plugin installed</div>
-              <div style="font-family:var(--km-font-mono);font-size:10px;color:var(--km-text-muted);margin-top:2px;word-break:break-all;">${esc(status.install_path)}</div>
-            </div>
-            <km-button variant="secondary" size="sm" id="btn-plugin-action" data-action="reinstall" style="flex-shrink:0">Reinstall (clean)</km-button>
-          </div>`;
-      } else {
-        slot.innerHTML = `
-          <div style="display:flex;align-items:center;gap:var(--km-space-3);">
-            <div style="flex:1;">
-              <div style="font-size:var(--km-font-size-sm);font-weight:var(--km-font-weight-medium);color:var(--km-warning)">Plugin not installed</div>
-              <div style="font-family:var(--km-font-mono);font-size:10px;color:var(--km-text-muted);margin-top:2px;">${esc(status.install_path)}</div>
-            </div>
-            <km-button variant="primary" size="sm" id="btn-plugin-action" data-action="install" style="flex-shrink:0">Install Plugin</km-button>
-          </div>`;
-      }
-    } catch {
-      slot.innerHTML = `<span style="font-size:11px;color:var(--km-text-muted)">Could not check plugin status.</span>`;
-    }
-
-    // Wire the action button (re-wired each time slot is refreshed)
-    slot.querySelector('#btn-plugin-action')?.addEventListener('km-click', async (e) => {
-      const btn    = slot.querySelector('#btn-plugin-action');
-      const action = btn?.dataset.action;
-      if (btn) btn.setAttribute('loading', '');
-      if (result) { result.style.display = 'none'; result.innerHTML = ''; }
-
-      try {
-        let r;
-        if (action === 'install') {
-          const { installBridgePlugin } = await import('../../../modules/kicad-bridge/BridgeClient.js');
-          r = await installBridgePlugin();
-        } else {
-          r = await invoke(REINSTALL_BRIDGE_PLUGIN);
-        }
-        if (result) {
-          result.style.display = 'block';
-          result.innerHTML = r.success
-            ? `<span style="color:var(--km-trace)">✓ ${esc(r.message)}</span>`
-            : `<span style="color:var(--km-red)">✗ ${esc(r.message)}</span>`;
-        }
-        this._notify(r.success ? 'success' : 'error',
-          r.success ? 'Plugin ready' : 'Plugin install failed', r.message);
-        // Refresh slot so button changes from "Install" to "Reinstall (clean)"
-        this._refreshPluginSlot(root);
-      } catch (err) {
-        Logger.error('Settings', 'plugin action failed', err);
-        const msg = String(err);
-        if (result) {
-          result.style.display = 'block';
-          result.innerHTML = `<span style="color:var(--km-red)">✗ ${esc(msg)}</span>`;
-        }
-        this._notify('error', 'Plugin install failed', msg);
-        if (btn) btn.removeAttribute('loading');
-      }
-    });
   }
 }
 

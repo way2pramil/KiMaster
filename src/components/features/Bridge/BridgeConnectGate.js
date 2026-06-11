@@ -258,7 +258,6 @@ export class BridgeConnectGate extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.appendChild(T.content.cloneNode(true));
-    this._connecting = false;
   }
 
   connectedCallback() {
@@ -271,7 +270,7 @@ export class BridgeConnectGate extends HTMLElement {
     const btnConfirm = this.shadowRoot.getElementById('btn-confirm');
 
     backdrop.addEventListener('click', (e) => {
-      if (e.target === backdrop && !this._connecting) this._close(false);
+      if (e.target === backdrop) this._close(false);
     });
 
     btnCancel.addEventListener('click', () => this._close(false));
@@ -279,19 +278,15 @@ export class BridgeConnectGate extends HTMLElement {
   }
 
   _confirm() {
-    this._connecting = true;
-    this.shadowRoot.getElementById('loading').classList.add('show');
-    this.shadowRoot.getElementById('btn-confirm').disabled = true;
-    this.shadowRoot.getElementById('btn-cancel').disabled = true;
-
-    this.dispatchEvent(new CustomEvent('km-bridge-connect-confirm', {
+    this.dispatchEvent(new CustomEvent('km-bridge-connect-response', {
+      detail: { approved: true },
       bubbles: true,
       composed: true,
     }));
+    this.remove();
   }
 
   _close(approved) {
-    if (this._connecting) return; // prevent double-close during connection
     this.dispatchEvent(new CustomEvent('km-bridge-connect-response', {
       detail: { approved },
       bubbles: true,

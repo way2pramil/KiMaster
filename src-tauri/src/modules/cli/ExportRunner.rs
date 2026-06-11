@@ -89,7 +89,8 @@ pub async fn export_gerbers(
         args.push("--use-drill-file-origin".into());
     }
     if let Some(true) = opts.no_aperture_macros {
-        args.push("--no-aperture-macros".into());
+        // kicad-cli 10 renamed --no-aperture-macros → --disable-aperture-macros
+        args.push("--disable-aperture-macros".into());
     }
 
     args.push(pcb_file.to_string_lossy().into_owned());
@@ -138,6 +139,8 @@ pub struct DrillOptions {
     pub generate_map: Option<bool>,
     /// Map format (e.g. "ps", "gerberx2", "svg", "pdf", "dxf").
     pub map_format: Option<String>,
+    /// Route oval holes instead of using G85 canned cycles (Excellon only).
+    pub oval_holes_route: Option<bool>,
 }
 
 impl Default for DrillOptions {
@@ -150,11 +153,17 @@ impl Default for DrillOptions {
             separate_th: None,
             generate_map: None,
             map_format: None,
+            oval_holes_route: None,
         }
     }
 }
 
 /// Export drill files from a `.kicad_pcb`.
+///
+/// Verified against kicad-cli 10.0.1:
+/// - units flag is `--excellon-units` (Excellon only) / `--gerber-precision` (Gerber)
+/// - `--separate-th` is now `--excellon-separate-th`
+/// - oval-hole routing is now `--excellon-oval-format route`
 pub async fn export_drill(
     cli_path: &Path,
     pcb_file: &Path,
@@ -174,10 +183,13 @@ pub async fn export_drill(
         DrillFormat::Gerber   => args.push("gerber".into()),
     }
 
-    args.push("--units".into());
-    match opts.units {
-        DrillUnits::Mm     => args.push("mm".into()),
-        DrillUnits::Inches => args.push("in".into()),
+    // Units flag: Excellon uses --excellon-units, Gerber has no units flag (always mm).
+    if matches!(opts.format, DrillFormat::Excellon) {
+        args.push("--excellon-units".into());
+        match opts.units {
+            DrillUnits::Mm     => args.push("mm".into()),
+            DrillUnits::Inches => args.push("in".into()),
+        }
     }
 
     if matches!(opts.origin, DrillOrigin::DrillFileOrigin) {
@@ -185,7 +197,9 @@ pub async fn export_drill(
     }
 
     if let Some(true) = opts.separate_th {
-        args.push("--separate-th".into());
+        if matches!(opts.format, DrillFormat::Excellon) {
+            args.push("--excellon-separate-th".into());
+        }
     }
 
     if let Some(true) = opts.generate_map {
@@ -193,6 +207,13 @@ pub async fn export_drill(
         if let Some(ref fmt) = opts.map_format {
             args.push("--map-format".into());
             args.push(fmt.clone());
+        }
+    }
+
+    if let Some(true) = opts.oval_holes_route {
+        if matches!(opts.format, DrillFormat::Excellon) {
+            args.push("--excellon-oval-format".into());
+            args.push("route".into());
         }
     }
 
@@ -358,24 +379,46 @@ impl Default for SvgOptions {
     }
 }
 
+/// Default layer set used by SVG/PDF export when the user hasn't picked any.
+/// kicad-cli 10 requires at least one layer; an empty `--layers ""` errors out
+/// with "At least one layer must be specified".
+const DEFAULT_PLOT_LAYERS: &[&str] = &[
+    "F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "F.Mask", "B.Mask", "Edge.Cuts",
+];
+
 /// Export SVG from a `.kicad_pcb`.
+///
+/// Verified against kicad-cli 10.0.1:
+/// - `--output` is the **directory** (kicad 9 took a file path).
+/// - kicad 10 deprecates the single-file behavior; `--mode-single` keeps a
+///   single output and treats `--output` as the file path again.
+/// - `--board-area-only` was replaced by `--page-size-mode 2` (board area only)
+///   or `--fit-page-to-board`. We use `--page-size-mode 2` for compatibility.
+/// - kicad-cli 10 requires at least one layer; if the config has none, we
+///   fall back to the standard fab set.
 pub async fn export_svg(
     cli_path: &Path,
     pcb_file: &Path,
     opts: &SvgOptions,
 ) -> Result<ExportResult, String> {
+    let output_dir = opts.output_file.parent().unwrap_or(Path::new("."));
+
     let mut args: Vec<String> = vec![
         "pcb".into(),
         "export".into(),
         "svg".into(),
+        "--mode-single".into(),
         "--output".into(),
         opts.output_file.to_string_lossy().into_owned(),
     ];
 
-    if !opts.layers.is_empty() {
-        args.push("--layers".into());
-        args.push(opts.layers.join(","));
-    }
+    let layers = if opts.layers.is_empty() {
+        DEFAULT_PLOT_LAYERS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+    } else {
+        opts.layers.clone()
+    };
+    args.push("--layers".into());
+    args.push(layers.join(","));
     if let Some(ref theme) = opts.theme {
         args.push("--theme".into());
         args.push(theme.clone());
@@ -388,7 +431,10 @@ pub async fn export_svg(
     }
     match opts.page_size_mode {
         PageSizeMode::PageSizeFromBoard => {}
-        PageSizeMode::BoardAreaOnly => { args.push("--board-area-only".into()); }
+        PageSizeMode::BoardAreaOnly => {
+            args.push("--page-size-mode".into());
+            args.push("2".into());
+        }
     }
     if let Some(true) = opts.exclude_drawing_sheet {
         args.push("--exclude-drawing-sheet".into());
@@ -399,7 +445,6 @@ pub async fn export_svg(
 
     args.push(pcb_file.to_string_lossy().into_owned());
 
-    let output_dir = opts.output_file.parent().unwrap_or(Path::new("."));
     CliRunner::run_export(cli_path, &args, output_dir).await
 }
 
@@ -421,6 +466,8 @@ pub struct PdfOptions {
     pub black_and_white: Option<bool>,
     /// Separate file per layer.
     pub separate_files: Option<bool>,
+    /// Scale factor (1.0 = 1:1). None = default.
+    pub scale: Option<f32>,
 }
 
 impl Default for PdfOptions {
@@ -435,16 +482,25 @@ impl Default for PdfOptions {
             exclude_drawing_sheet: None,
             black_and_white: None,
             separate_files: None,
+            scale: None,
         }
     }
 }
 
 /// Export PDF from a `.kicad_pcb`.
+///
+/// Verified against kicad-cli 10.0.1:
+/// - `--output` is the **directory** (kicad 9 took a file path).
+/// - `--separate-files` is now `--mode-separate`.
+/// - `--board-area-only` is now `--page-size-mode 2`.
+/// - kicad-cli 10 requires at least one layer; falls back to DEFAULT_PLOT_LAYERS.
 pub async fn export_pdf(
     cli_path: &Path,
     pcb_file: &Path,
     opts: &PdfOptions,
 ) -> Result<ExportResult, String> {
+    let output_dir = opts.output_file.parent().unwrap_or(Path::new("."));
+
     let mut args: Vec<String> = vec![
         "pcb".into(),
         "export".into(),
@@ -453,10 +509,13 @@ pub async fn export_pdf(
         opts.output_file.to_string_lossy().into_owned(),
     ];
 
-    if !opts.layers.is_empty() {
-        args.push("--layers".into());
-        args.push(opts.layers.join(","));
-    }
+    let layers = if opts.layers.is_empty() {
+        DEFAULT_PLOT_LAYERS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+    } else {
+        opts.layers.clone()
+    };
+    args.push("--layers".into());
+    args.push(layers.join(","));
     if let Some(ref theme) = opts.theme {
         args.push("--theme".into());
         args.push(theme.clone());
@@ -469,17 +528,131 @@ pub async fn export_pdf(
     }
     match opts.page_size_mode {
         PageSizeMode::PageSizeFromBoard => {}
-        PageSizeMode::BoardAreaOnly => { args.push("--board-area-only".into()); }
+        PageSizeMode::BoardAreaOnly => {
+            args.push("--page-size-mode".into());
+            args.push("2".into());
+        }
     }
-    if let Some(true) = opts.exclude_drawing_sheet {
-        args.push("--exclude-drawing-sheet".into());
+    // kicad-cli 10 PDF: drawing sheet is on by default; passing --mode-single
+    // + filename keeps the single-file behavior. Drawing sheet can't be
+    // excluded for PDF in kicad 10 (no --exclude-drawing-sheet flag).
+    if let Some(true) = opts.separate_files {
+        args.push("--mode-separate".into());
     }
     if let Some(true) = opts.black_and_white {
         args.push("--black-and-white".into());
     }
-    if let Some(true) = opts.separate_files {
-        args.push("--separate-files".into());
+    if let Some(scale) = opts.scale {
+        if (scale - 1.0_f32).abs() > 0.0001 {
+            args.push("--scale".into());
+            args.push(format!("{scale:.4}"));
+        }
     }
+
+    args.push(pcb_file.to_string_lossy().into_owned());
+
+    CliRunner::run_export(cli_path, &args, output_dir).await
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  3D STEP EXPORT
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Options for `kicad-cli pcb export step` — matches KiCad 10 full dialog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepOptions {
+    pub output_file: PathBuf,
+    /// Output format: "step" (default), "brep", "xao", "gltf", "stl", "vrml".
+    pub format: Option<String>,
+    // ── Coordinates ──
+    pub use_drill_origin:   Option<bool>,
+    pub use_grid_origin:    Option<bool>,
+    pub board_center_origin:Option<bool>,
+    /// "X,Y" string e.g. "100.0,150.0"
+    pub user_origin:        Option<String>,
+    // ── Board options ──
+    pub no_board_body:   Option<bool>,
+    pub no_components:   Option<bool>,
+    pub no_unspecified:  Option<bool>,
+    pub no_dnp:          Option<bool>,
+    pub subst_models:    Option<bool>,
+    pub include_pads:    Option<bool>,
+    // ── Conductor options ──
+    pub include_tracks:       Option<bool>,
+    pub include_zones:        Option<bool>,
+    pub include_inner_copper: Option<bool>,
+    pub fuse_shapes:          Option<bool>,
+    pub fill_all_vias:        Option<bool>,
+    pub net_filter:           Option<String>,
+    // ── Other ──
+    pub force:            Option<bool>,
+    pub no_optimize_step: Option<bool>,
+    /// Minimum distance between points in mm (board outline chaining tolerance).
+    pub min_distance:     Option<f64>,
+}
+
+impl Default for StepOptions {
+    fn default() -> Self {
+        Self {
+            output_file: PathBuf::from("board.step"),
+            format: None,
+            use_drill_origin: None, use_grid_origin: None,
+            board_center_origin: None, user_origin: None,
+            no_board_body: None, no_components: None,
+            no_unspecified: None, no_dnp: None,
+            subst_models: None, include_pads: None,
+            include_tracks: None, include_zones: None,
+            include_inner_copper: None, fuse_shapes: None,
+            fill_all_vias: None, net_filter: None,
+            force: Some(true), no_optimize_step: None,
+            min_distance: Some(0.001),
+        }
+    }
+}
+
+/// Export a 3D model from a `.kicad_pcb` (STEP, BREP, XAO, GLTF, STL, VRML).
+pub async fn export_step(
+    cli_path: &Path,
+    pcb_file: &Path,
+    opts: &StepOptions,
+) -> Result<ExportResult, String> {
+    let mut args: Vec<String> = vec![
+        "pcb".into(), "export".into(), "step".into(),
+        "--output".into(), opts.output_file.to_string_lossy().into_owned(),
+    ];
+
+    if let Some(ref fmt) = opts.format {
+        if fmt != "step" {
+            args.push("--format".into()); args.push(fmt.clone());
+        }
+    }
+
+    // Coordinates (mutually exclusive; CLI takes separate flags)
+    if let Some(true) = opts.use_drill_origin    { args.push("--drill-origin".into()); }
+    else if let Some(true) = opts.use_grid_origin { args.push("--grid-origin".into()); }
+    else if let Some(true) = opts.board_center_origin { args.push("--board-center-origin".into()); }
+    else if let Some(ref xy) = opts.user_origin   { args.push("--user-origin".into()); args.push(xy.clone()); }
+
+    // Board options
+    if let Some(true) = opts.no_board_body  { args.push("--no-board-body".into()); }
+    if let Some(true) = opts.no_components  { args.push("--no-components".into()); }
+    if let Some(true) = opts.no_unspecified { args.push("--no-unspecified".into()); }
+    if let Some(true) = opts.no_dnp         { args.push("--no-dnp".into()); }
+    if let Some(true) = opts.subst_models   { args.push("--subst-models".into()); }
+
+    // Conductor options
+    if let Some(true) = opts.include_tracks       { args.push("--include-tracks".into()); }
+    if let Some(true) = opts.include_pads         { args.push("--include-pads".into()); }
+    if let Some(true) = opts.include_zones        { args.push("--include-zones".into()); }
+    if let Some(true) = opts.include_inner_copper { args.push("--include-inner-copper".into()); }
+    if let Some(true) = opts.fuse_shapes          { args.push("--fuse-shapes".into()); }
+    if let Some(true) = opts.fill_all_vias        { args.push("--fill-all-vias".into()); }
+    if let Some(ref net) = opts.net_filter        { args.push("--net-filter".into()); args.push(net.clone()); }
+
+    // Other
+    if let Some(true) = opts.force            { args.push("--force".into()); }
+    if let Some(true) = opts.no_optimize_step { args.push("--no-optimize-step".into()); }
+    if let Some(d) = opts.min_distance        { args.push("--min-distance".into()); args.push(format!("{d:.4}")); }
 
     args.push(pcb_file.to_string_lossy().into_owned());
 
@@ -740,8 +913,10 @@ pub async fn export_bom(
         args.push(opts.group_by.join(","));
     }
     if !opts.sort_by.is_empty() {
-        args.push("--sort-by".into());
-        args.push(opts.sort_by.join(","));
+        // kicad-cli 10 renamed --sort-by → --sort-field (single field).
+        // Join takes the first field to preserve closest intent.
+        args.push("--sort-field".into());
+        args.push(opts.sort_by[0].clone());
     }
     if let Some(ref d) = opts.field_delimiter {
         args.push("--field-delimiter".into());

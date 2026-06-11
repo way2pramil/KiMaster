@@ -40,6 +40,7 @@ TEMPLATE.innerHTML = `
     backdrop-filter: var(--km-backdrop-blur, none);
     -webkit-backdrop-filter: var(--km-backdrop-blur, none);
     animation: overlay-in var(--km-duration-base) var(--km-ease-compress) both;
+    pointer-events: all;
   }
 
   /* ── Dialog panel ── */

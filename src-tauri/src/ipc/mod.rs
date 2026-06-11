@@ -4,8 +4,13 @@
 #![allow(non_snake_case)]
 
 pub mod BridgeCommands;
+pub mod IpcCommands;
 pub mod CliCommands;
+pub mod ExportCommands;
+pub mod ExportProfileCommands;
 pub mod GitCommands;
 pub mod NotesCommands;
 pub mod ProjectCommands;
 pub mod UceCommands;
+pub mod Pcb3dCommands;
+pub mod CanvasCommands;

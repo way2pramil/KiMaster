@@ -1,0 +1,200 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                   BRIDGE TRUST FLOW — ARCHITECTURE                             ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DASHBOARD COMPONENT                                  │
+│                                                                              │
+│  _renderBridge()                                                            │
+│  ├─ Checks: store.bridgeConnected                                          │
+│  ├─ Shows: "Not connected" or "Connected to KiCad"                         │
+│  └─ On click: showConnectGate(40001)                                       │
+│                                                                              │
+└────────────────────┬────────────────────────────────────────────────────────┘
+                     │
+                     │ import showConnectGate
+                     │
+        ┌────────────▼──────────────────────┐
+        │   BridgeClient (BridgeClient.js)   │
+        │                                    │
+        │  showConnectGate(port)            │
+        │  ├─ Dynamic import:                │
+        │  │  BridgeConnectGate.show()      │
+        │  ├─ Waits for user decision       │
+        │  └─ If approved:                   │
+        │     connectBridge(port)            │
+        │     └─ Rust IPC: BRIDGE_CONNECT   │
+        │                                    │
+        └────┬──────────────────────┬───────┘
+             │                      │
+    ┌────────▼──────────┐  ┌────────▼──────────────┐
+    │  User cancels     │  │ User approves         │
+    │  Gate returns:    │  │ Gate returns:         │
+    │  false            │  │ true                  │
+    │  │                │  │ │                      │
+    │  └─ Log & exit    │  │ └─ connectBridge()    │
+    │                   │  │    └─ Tauri IPC       │
+    └───────────────────┘  │       └─ Rust WS      │
+                           │          └─ KiCad     │
+                           │                        │
+                           └────────┬───────────────┘
+                                    │
+                        Bridge:connected event
+                                    │
+                        ┌───────────▼────────────────┐
+                        │  Store updates              │
+                        │  ├─ bridgeConnected = true  │
+                        │  ├─ boardState = {...}      │
+                        │  └─ bridgeKicadVersion      │
+                        │                             │
+                        └───────────┬────────────────┘
+                                    │
+                        ┌───────────▼────────────────┐
+                        │  Dashboard renders          │
+                        │  "Connected to KiCad"       │
+                        │  "Live sync · board_name"   │
+                        │  ● (cyan glowing dot)       │
+                        └────────────────────────────┘
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                        MODALS — WHEN THEY APPEAR                            ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────┐
+│  BridgeConnectGate               │
+│  (Always shows on Connect click)  │
+├──────────────────────────────────┤
+│ When:  User clicks [Connect]     │
+│ Show:  • Title: "Ready to...?    │
+│        • Checklist (3 items)     │
+│        • Safety badge            │
+│        • [Cancel] [Connect]      │
+│ Close: • User clicks button      │
+│        • User clicks backdrop    │
+│ Return: Promise<boolean>         │
+│         true = proceed           │
+│         false = cancel           │
+└──────────────────────────────────┘
+
+┌──────────────────────────────────┐
+│  BridgePermissionsModal          │
+│  (Optional: First-time setup)    │
+├──────────────────────────────────┤
+│ When:  • App launch (if new)     │
+│        • "Learn more" link click │
+│        • Settings button         │
+│ Show:  • Title: "Connect to...   │
+│        • Description             │
+│        • Expandable section      │
+│          ("What it can do ›")    │
+│        • 5 permissions listed    │
+│        • Safety info             │
+│        • [Not now] [Learn more]  │
+│ Close: • User clicks button      │
+│ Return: Promise<boolean>         │
+└──────────────────────────────────┘
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                    DATA FLOW & STATE UPDATES                                ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+                    Bridge: Connected Event
+                    (Rust → Tauri → JS)
+                           │
+                ┌──────────▼──────────────┐
+                │ BridgeClient._onConnected
+                │ ├─ store.bridgeConnected = true
+                │ ├─ store.bridgeBoardName = X
+                │ └─ requestBoardState()
+                └──────────┬──────────────┘
+                           │
+              ┌────────────▼────────────────┐
+              │ store (Proxy-based State)   │
+              │ ├─ bridgeConnected         │
+              │ ├─ boardState              │
+              │ ├─ boardComponents[]       │
+              │ └─ bridgeBoardName         │
+              └────────────┬────────────────┘
+                           │
+              ┌────────────▼────────────────┐
+              │ Dashboard subscribed to:    │
+              │ subscribe('bridgeConnected')│
+              │ └─ Triggers _renderBridge()│
+              └────────────┬────────────────┘
+                           │
+              ┌────────────▼────────────────┐
+              │ UI Updates                  │
+              │ ├─ Status text changes     │
+              │ ├─ Dot color → cyan        │
+              │ ├─ Hero glow effect        │
+              │ └─ Button state updates    │
+              └────────────────────────────┘
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                   LANGUAGE & TONE — GUIDING PRINCIPLE                       ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+Every piece of text follows the "Warmth Standard":
+
+   Read aloud. If it sounds like documentation,
+   a config file, or an academic paper → REWRITE
+
+✅ WARM (sounds like a calm colleague)
+   • "Ready to connect?"
+   • "Your board is safe"
+   • "See your board layout live"
+   • "Changes only when you ask"
+
+❌ COLD (sounds like a form or manual)
+   • "Instantiate WebSocket bridge"
+   • "WARNING: Data loss potential"
+   • "Enable bidirectional sync"
+   • "Confirm operation execution"
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                         FILE ORGANIZATION                                   ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+src/
+├── components/
+│   ├── features/
+│   │   ├── Bridge/  ← NEW
+│   │   │   ├── BridgePermissionsModal.js  (421 lines)
+│   │   │   ├── BridgeConnectGate.js       (314 lines)
+│   │   │   └── index.js                   (6 lines)
+│   │   └── Dashboard/
+│   │       └── Dashboard.js               (MODIFIED: +4 lines)
+│   │
+│   └── ui/
+│       └── index.js                       (auto-registers Web Components)
+│
+└── modules/
+    └── kicad-bridge/
+        └── BridgeClient.js                (MODIFIED: +15 lines)
+
+Documentation/
+├── BRIDGE_TRUST_FLOW.md          ← Complete guide
+├── BRIDGE_UI_SUMMARY.md          ← Visual mockups
+├── BRIDGE_ARCHITECTURE.txt       ← This file
+└── IMPLEMENTATION_COMPLETE.md    ← Status & checklist
+
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                          KEY INSIGHT                                         ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+
+                    The system decides.
+                    The user overrides.
+
+Bridge is smart enough to NOT force connection on users.
+But when user CHOOSES to connect, we make it clear what's happening.
+Trust comes from transparency, not from hiding complexity.
+
+User sees:
+  • What will happen ("See board layout live")
+  • Why it's safe ("Your board is safe")
+  • What they control ("Changes only when you ask")
+  • How to undo ("You can undo them in KiCad")
+
+Result: Confident user who trusts the tool.
+
+═════════════════════════════════════════════════════════════════════════════

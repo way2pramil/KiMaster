@@ -1,11 +1,12 @@
 //! Tauri-managed application state. Arc<Mutex<>> wraps all mutable data.
 
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 use notify::RecommendedWatcher;
 
 use crate::modules::bridge::WsClient::BridgeCmd;
+use crate::modules::kicad_ipc::IpcClient::IpcClient;
 
 /// Lightweight project descriptor stored in AppState and serialised to the frontend.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -22,6 +23,32 @@ pub struct ProjectInfo {
     pub kimaster_dir: Option<String>,
     /// ISO-8601 timestamp of when this project was last opened.
     pub last_opened: Option<String>,
+}
+
+/// Status of the KiCad IPC API connection.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct KiCadIpcStatus {
+    pub connected:     bool,
+    /// Full path/URL of the socket we connected to (for drift detection on rescan).
+    pub socket_path:   Option<String>,
+    /// The token we used — stored to detect if KiCad restarted and issued a new one.
+    pub token:         Option<String>,
+    pub kicad_version: Option<String>,
+}
+
+/// Cached schematic state received from the Python bridge plugin.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct CachedSchematicState {
+    /// Absolute path of the .kicad_sch that was parsed.
+    pub sch_path: Option<String>,
+    /// Number of de-duplicated component references found.
+    pub component_count: usize,
+    /// Number of net labels (global/local/power) found.
+    pub net_label_count: usize,
+    /// Number of hierarchical sheets (including root).
+    pub sheet_count: usize,
+    /// Full raw JSON — passed to frontend as-is.
+    pub raw: Option<serde_json::Value>,
 }
 
 /// Cached board state received from the Python bridge plugin.
@@ -65,6 +92,15 @@ pub struct KiMasterStateInner {
     pub bridge_cmd_tx: Option<UnboundedSender<BridgeCmd>>,
     /// Most recent board state snapshot received from KiCad.
     pub bridge_board_state: CachedBoardState,
+    /// Most recent schematic state snapshot received from KiCad.
+    pub bridge_schematic_state: CachedSchematicState,
+
+    // ── KiCad IPC API (Phase 1+) ──────────────────────────────────────────────
+    /// Status of the KiCad IPC connection (for UI display + drift detection).
+    pub kicad_ipc_status: KiCadIpcStatus,
+    /// Live IPC client shared via Arc across Tauri commands.
+    /// None when KiCad is not running or IPC is not connected.
+    pub kicad_ipc_client: Option<Arc<IpcClient>>,
 
     // ── Project lock ───────────────────────────────────────────────────────
     /// Absolute path of the `.kicad_pcb` KiMaster is locked to for this session.

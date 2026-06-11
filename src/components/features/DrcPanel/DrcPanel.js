@@ -11,6 +11,7 @@
 
 import { store, subscribe } from '../../../core/State.js';
 import { Logger } from '../../../core/Logger.js';
+import { notify } from '../../../core/Notify.js';
 import { runDrc, runErc } from '../../../modules/drc/DrcService.js';
 import { FAB_PRESETS, evaluatePreset, readinessScore } from '../../../modules/fab/FabRules.js';
 
@@ -253,34 +254,32 @@ TEMPLATE.innerHTML = `
     transition: opacity 150ms var(--km-ease), transform 150ms var(--km-ease);
   }
 
-  /* ── Project-locked file input ── */
-  .file-path[data-project-locked] {
-    border-color: var(--km-accent);
-    color: var(--km-text-primary);
-    background: var(--km-accent-muted);
-  }
-
-  /* ── File picker row ── */
-  .file-input-row {
+  /* ── Bridge source row ── */
+  .bridge-source {
     display: flex;
-    gap: var(--km-space-2);
     align-items: center;
+    gap: var(--km-space-2);
+    padding: var(--km-space-2) var(--km-space-3);
+    background: rgba(6,182,212,0.06);
+    border: 1px solid rgba(6,182,212,0.18);
+    border-radius: var(--km-radius-sm);
     flex-shrink: 0;
   }
-  .file-path {
-    flex: 1;
-    padding: var(--km-space-2) var(--km-space-3);
-    border-radius: var(--km-radius-sm);
-    border: 1px solid var(--km-border);
-    background: var(--km-bg-primary);
-    color: var(--km-text-secondary);
+  .bridge-source-label {
+    font-size: var(--km-font-size-xs);
+    color: var(--km-text-muted);
+    flex-shrink: 0;
+  }
+  .bridge-source-path {
     font-family: var(--km-font-mono);
     font-size: var(--km-font-size-xs);
-    outline: none;
-    transition: border-color var(--km-duration-fast) var(--km-ease);
+    color: var(--km-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
   }
-  .file-path:focus { border-color: var(--km-accent); }
-  .file-path::placeholder { color: var(--km-text-muted); }
 </style>
 
 <div class="panel">
@@ -300,8 +299,10 @@ TEMPLATE.innerHTML = `
     </button>
   </div>
 
-  <div class="file-input-row">
-    <input class="file-path" id="file-input" type="text" placeholder="Path to .kicad_pcb file..." />
+  <div class="bridge-source hidden" id="bridge-source">
+    <km-icon name="plug" size="sm" style="color:var(--km-live);flex-shrink:0;"></km-icon>
+    <span class="bridge-source-label">File</span>
+    <span class="bridge-source-path" id="bridge-source-path"></span>
     <km-button variant="primary" size="sm" id="btn-run">Run DRC</km-button>
   </div>
 
@@ -353,17 +354,18 @@ export class DrcPanel extends HTMLElement {
     // Run button
     this.shadowRoot.getElementById('btn-run').addEventListener('km-click', () => this._runCheck());
 
-    // Pre-fill file path from active project
-    this._syncFileInput();
+    // Show bridge source row from current state
+    this._syncBridgeSource();
 
     // Subscribe to state changes
     this._unsubs.push(
-      subscribe('drcStatus',    () => this._onStatusChange()),
-      subscribe('drcErrors',    () => { this._renderViolations(); if (this._mode === 'mfg') this._renderMfg(); }),
-      subscribe('ercStatus',    () => this._onStatusChange()),
-      subscribe('ercErrors',    () => this._renderViolations()),
-      subscribe('project',      () => this._syncFileInput()),
-      subscribe('boardState',   () => { if (this._mode === 'mfg') this._renderMfg(); }),
+      subscribe('drcStatus',        () => this._onStatusChange()),
+      subscribe('drcErrors',        () => { this._renderViolations(); if (this._mode === 'mfg') this._renderMfg(); }),
+      subscribe('ercStatus',        () => this._onStatusChange()),
+      subscribe('ercErrors',        () => this._renderViolations()),
+      subscribe('bridgeConnected',  () => { this._syncBridgeSource(); this._renderViolations(); }),
+      subscribe('bridgeBoardName',  () => this._syncBridgeSource()),
+      subscribe('boardState',       () => { if (this._mode === 'mfg') this._renderMfg(); }),
     );
 
     // Panel entrance handled by CSS (no JS opacity manipulation per architecture rules)
@@ -374,22 +376,32 @@ export class DrcPanel extends HTMLElement {
     this._unsubs = [];
   }
 
-  _syncFileInput() {
-    const input  = this.shadowRoot.getElementById('file-input');
-    const proj   = store.project;
-    // Rust serialises struct fields as snake_case: pcb_file, schematic_file
-    if (this._mode === 'drc' && proj?.pcb_file) {
-      input.value = proj.pcb_file;
-      input.setAttribute('data-project-locked', '');
-      input.title = 'Auto-filled from active project — edit to override';
-    } else if (this._mode === 'erc' && proj?.schematic_file) {
-      input.value = proj.schematic_file;
-      input.setAttribute('data-project-locked', '');
-      input.title = 'Auto-filled from active project — edit to override';
-    } else {
-      input.removeAttribute('data-project-locked');
-      input.title = '';
+  _syncBridgeSource() {
+    const sourceRow  = this.shadowRoot.getElementById('bridge-source');
+    const sourcePath = this.shadowRoot.getElementById('bridge-source-path');
+    const btn        = this.shadowRoot.getElementById('btn-run');
+    const connected  = store.bridgeConnected;
+
+    if (!sourceRow) return;
+
+    if (!connected || this._mode === 'mfg') {
+      sourceRow.classList.add('hidden');
+      return;
     }
+
+    const filePath = this._activeFilePath();
+    sourceRow.classList.toggle('hidden', !filePath);
+    if (sourcePath) sourcePath.textContent = filePath || '';
+    if (btn) btn.textContent = this._mode === 'drc' ? 'Run DRC' : 'Run ERC';
+  }
+
+  /** Derive the active file path from bridge state for the current mode. */
+  _activeFilePath() {
+    const boardPath = store.bridgeBoardName;
+    if (!boardPath) return '';
+    if (this._mode === 'drc') return boardPath;
+    // ERC: derive schematic path from board path (same dir, same stem)
+    return boardPath.replace(/\.kicad_pcb$/i, '.kicad_sch');
   }
 
   _switchTab(tab) {
@@ -399,27 +411,19 @@ export class DrcPanel extends HTMLElement {
     }
 
     const isMfg = tab === 'mfg';
-    const fileRow = this.shadowRoot.querySelector('.file-input-row');
     const statsBar = this.shadowRoot.getElementById('stats-bar');
     const filters  = this.shadowRoot.getElementById('filters');
     const violList = this.shadowRoot.getElementById('violations-list');
 
     if (isMfg) {
-      fileRow?.classList.add('hidden');
       statsBar.classList.add('hidden');
       filters.classList.add('hidden');
       violList.classList.add('hidden');
+      this._syncBridgeSource();
       this._renderMfg();
     } else {
-      fileRow?.classList.remove('hidden');
       violList.classList.remove('hidden');
-
-      const btn = this.shadowRoot.getElementById('btn-run');
-      btn.textContent = tab === 'drc' ? 'Run DRC' : 'Run ERC';
-      const input = this.shadowRoot.getElementById('file-input');
-      input.placeholder = tab === 'drc' ? 'Path to .kicad_pcb file...' : 'Path to .kicad_sch file...';
-      input.value = '';
-      this._syncFileInput();
+      this._syncBridgeSource();
       this._renderViolations();
     }
   }
@@ -433,8 +437,8 @@ export class DrcPanel extends HTMLElement {
   }
 
   async _runCheck() {
-    const filePath = this.shadowRoot.getElementById('file-input').value.trim();
-    if (!filePath) return;
+    const filePath = this._activeFilePath();
+    if (!filePath || !store.bridgeConnected) return;
 
     const btn = this.shadowRoot.getElementById('btn-run');
     btn.setAttribute('loading', '');
@@ -447,6 +451,7 @@ export class DrcPanel extends HTMLElement {
       }
     } catch (err) {
       Logger.error('DrcPanel', err, `${this._mode.toUpperCase()} run failed`);
+      notify({ type: 'error', title: `${this._mode.toUpperCase()} Failed`, message: String(err?.message ?? err) });
     } finally {
       btn.removeAttribute('loading');
     }
@@ -554,12 +559,21 @@ export class DrcPanel extends HTMLElement {
     if (status === 'idle') {
       statsBar.classList.add('hidden');
       filters.classList.add('hidden');
-      container.innerHTML = `
-        <div class="state-msg">
-          <km-icon name="${this._mode}" size="xl" class="state-icon"></km-icon>
-          <span class="msg-text">Run a check to see violations here.</span>
-        </div>
-      `;
+      if (!store.bridgeConnected) {
+        container.innerHTML = `
+          <div class="state-msg">
+            <km-icon name="plug" size="xl" class="state-icon"></km-icon>
+            <span class="msg-text">Connect the KiCad bridge to run ${this._mode.toUpperCase()} checks.</span>
+          </div>
+        `;
+      } else {
+        container.innerHTML = `
+          <div class="state-msg">
+            <km-icon name="${this._mode}" size="xl" class="state-icon"></km-icon>
+            <span class="msg-text">Run a check to see violations here.</span>
+          </div>
+        `;
+      }
       return;
     }
 

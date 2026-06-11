@@ -1,0 +1,76 @@
+{
+  "id": "kimaster_universal",
+  "name": "KiMaster Universal",
+  "is_builtin": true,
+  "target": "project_relative",
+  "rootPath": "exports",
+  "pattern": "{output_type}",
+  "openOnComplete": true,
+  "cleanTarget": false,
+  "configs": {
+    "gerbers": {
+      "layers": ["F.Cu","B.Cu","F.SilkS","B.SilkS","F.Mask","B.Mask","Edge.Cuts"],
+      "precision": 6,
+      "use_x2": true,
+      "include_netlist": true,
+      "subtract_soldermask": false,
+      "use_drill_origin": false,
+      "no_aperture_macros": false
+    },
+    "drill": {
+      "format": "excellon",
+      "units": "mm",
+      "origin": "absolute",
+      "separate_th": false,
+      "generate_map": false,
+      "map_format": null,
+      "oval_holes_route": false
+    },
+    "pos": {
+      "side": "both",
+      "format": "csv",
+      "units": "mm",
+      "exclude_dnp": false,
+      "exclude_board_only": false,
+      "negate_x": false
+    },
+    "svg": {
+      "layers": [],
+      "theme": null,
+      "black_and_white": false,
+      "board_area_only": true,
+      "mirror": false,
+      "negative": false,
+      "exclude_drawing_sheet": false
+    },
+    "pdf": {
+      "layers": [],
+      "theme": null,
+      "black_and_white": false,
+      "board_area_only": false,
+      "separate_files": false,
+      "mirror": false,
+      "scale": 1.0,
+      "exclude_drawing_sheet": false
+    },
+    "bom": {
+      "output_format": "csv",
+      "fields": ["Reference","Value","Footprint","Quantity"],
+      "group_by": ["Value","Footprint"],
+      "sort_by": ["Reference"],
+      "ref_range_delimiter": "-",
+      "exclude_dnp": false
+    },
+    "sch_pdf": { "black_and_white": false, "exclude_drawing_sheet": false },
+    "sch_svg": { "black_and_white": false, "exclude_drawing_sheet": false },
+    "step": {
+      "use_drill_origin": false,
+      "use_grid_origin": false,
+      "no_unspecified": false,
+      "no_dnp": false,
+      "board_only": false,
+      "subst_models": false,
+      "min_distance": 0.01
+    }
+  }
+}

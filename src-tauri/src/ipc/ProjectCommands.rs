@@ -88,11 +88,12 @@ pub fn cmd_open_project(
         },
     };
 
-    // Open SQLite + upsert recent (non-fatal if it fails)
-    if let Err(e) = ProjectStore::open_db(&km_dir)
+    // Open per-project SQLite (provisions schema) then upsert into global recents DB
+    let _ = ProjectStore::open_db(&km_dir); // provision schema only
+    if let Err(e) = ProjectStore::open_global_db()
         .and_then(|conn| ProjectStore::upsert_recent(&conn, &pro_path, &name))
     {
-        tracing::warn!("[ProjectCommands] DB error: {e}");
+        tracing::warn!("[ProjectCommands] global DB upsert error: {e}");
     }
 
     // Discover sibling PCB / schematic files
@@ -153,20 +154,10 @@ pub fn cmd_close_project(app: AppHandle, state: State<'_, KiMasterState>) {
 
 // ── cmd_get_recent_projects ───────────────────────────────────────────────────
 
-/// Return up to 20 recent projects from the active project's DB.
+/// Return up to 20 recent projects from the global DB (no active project required).
 #[tauri::command]
-pub fn cmd_get_recent_projects(
-    state: State<'_, KiMasterState>,
-) -> Vec<ProjectStore::RecentProject> {
-    let guard = state.0.lock().unwrap();
-    let Some(proj) = &guard.active_project else { return vec![]; };
-    let km_dir = match &proj.kimaster_dir {
-        Some(d) => PathBuf::from(d),
-        None    => return vec![],
-    };
-    drop(guard);
-
-    match ProjectStore::open_db(&km_dir).and_then(|c| ProjectStore::get_recent(&c, 20)) {
+pub fn cmd_get_recent_projects() -> Vec<ProjectStore::RecentProject> {
+    match ProjectStore::open_global_db().and_then(|c| ProjectStore::get_recent(&c, 20)) {
         Ok(list) => list,
         Err(e) => {
             tracing::warn!("[ProjectCommands] get_recent: {e}");
@@ -207,6 +198,38 @@ pub fn cmd_pick_and_open_project(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Open a directory in the OS file manager (Explorer on Windows, Finder on macOS).
+/// Silently ignored if the path does not exist or shell is unavailable.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn cmd_open_directory(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Ok(()); // no-op — path doesn't exist yet
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // explorer.exe interprets '/' as a command-line switch prefix, so
+        // forward slashes must be converted to backslashes first.
+        let win_path = path.replace('/', "\\");
+        std::process::Command::new("explorer")
+            .arg(&win_path)
+            .spawn()
+            .map_err(|e| format!("explorer launch failed: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("open launch failed: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+    }
+    Ok(())
+}
 
 fn find_sibling(dir: &std::path::Path, stem: &str, ext: &str) -> Option<PathBuf> {
     let p = dir.join(format!("{stem}.{ext}"));

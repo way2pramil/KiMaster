@@ -286,6 +286,13 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
             }
         }
 
+        "schematic_state" => {
+            if let Some(data) = msg.get("data") {
+                cache_schematic_state(app, data.clone());
+                let _ = app.emit("bridge:schematic_state", data);
+            }
+        }
+
         "board_changed" => {
             let _ = app.emit("bridge:board_changed", json!({}));
         }
@@ -299,6 +306,12 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
         "net_info" => {
             if let Some(data) = msg.get("data") {
                 let _ = app.emit("bridge:net_info", data);
+            }
+        }
+
+        "stackup_data" => {
+            if let Some(data) = msg.get("data") {
+                let _ = app.emit("bridge:stackup_data", data);
             }
         }
 
@@ -323,6 +336,15 @@ fn handle_server_message(app: &AppHandle, port: u16, text: &str) {
 
         "pong" => {} // keepalive — ignore
 
+        // Plugin sends this before shutting down the server (user clicked Stop in KiCad)
+        "server_stopping" => {
+            let msg = msg["message"].as_str().unwrap_or("Bridge server stopped by KiCad").to_string();
+            tracing::info!("Bridge: server_stopping — {msg}");
+            // Emit a dedicated event so the frontend can show a clear "stopped" banner
+            // rather than the generic "disconnected / reconnecting" state.
+            let _ = app.emit("bridge:server_stopped", serde_json::json!({ "message": msg }));
+        }
+
         other => {
             tracing::trace!("Bridge: unhandled type '{other}'");
         }
@@ -345,9 +367,10 @@ fn update_bridge_connected(
 
 fn update_bridge_disconnected(app: &AppHandle) {
     if let Ok(mut inner) = app.state::<KiMasterState>().0.lock() {
-        inner.bridge_connected   = false;
-        inner.bridge_cmd_tx      = None;
-        inner.project_vault_dir  = None;
+        inner.bridge_connected        = false;
+        inner.bridge_cmd_tx           = None;
+        inner.project_vault_dir       = None;
+        inner.bridge_schematic_state  = Default::default();
         // Release the project lock — no project is active until the next connection
         inner.locked_board_path  = None;
         inner.locked_bridge_port = None;
@@ -413,6 +436,17 @@ fn cache_board_state(app: &AppHandle, data: Value) {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
+        state.raw             = Some(data);
+    }
+}
+
+fn cache_schematic_state(app: &AppHandle, data: Value) {
+    if let Ok(mut inner) = app.state::<KiMasterState>().0.lock() {
+        let state = &mut inner.bridge_schematic_state;
+        state.sch_path        = data["sch_path"].as_str().map(String::from);
+        state.component_count = data["components"].as_array().map(|a| a.len()).unwrap_or(0);
+        state.net_label_count = data["net_labels"].as_array().map(|a| a.len()).unwrap_or(0);
+        state.sheet_count     = data["sheet_count"].as_u64().unwrap_or(0) as usize;
         state.raw             = Some(data);
     }
 }

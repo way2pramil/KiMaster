@@ -1,16 +1,23 @@
 /**
  * @element km-command-palette
- * @summary Global Ctrl+K command palette — fuzzy search over routes, actions,
- *          and live board components.
+ * @summary Global Ctrl+K omni-bar — fuzzy search over routes, actions,
+ *          and live board components, with a mode prefix to scope results.
  *
  * Activation: set `open` attribute or call `.show()`.
  * Keyboard:   ↑ ↓ navigate  |  Enter select  |  Escape close
  *
  * Items are provided via the `setItems(groups)` method:
- *   groups = [{ label: 'Pages', items: [{ id, label, icon, description, action }] }]
+ *   groups = [{ label: 'Pages', items: [{ id, label, icon, description, kbd, kind, action }] }]
  *
- * @fires km-palette-select  — { item } when an item is chosen
+ * Mode prefix (typed at the start of the search box):
+ *   `> foo`  — action mode (only items with kind === 'action')
+ *   `/ foo`  — filter mode (items with kind === 'filter', or no kind)
+ *   `foo`    — default (all items)
+ *
+ * @fires km-palette-select  — { item, mode } when an item is chosen
  */
+
+import { createSearcher } from '../../../core/omni-search.js';
 
 const TEMPLATE = document.createElement('template');
 TEMPLATE.innerHTML = `
@@ -82,6 +89,25 @@ TEMPLATE.innerHTML = `
     color: var(--km-text-muted);
     flex-shrink: 0;
   }
+
+  /* mode chip — shown in the search row when the user typed a prefix */
+  .mode-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: var(--km-radius-xs);
+    background: var(--km-accent-muted);
+    color: var(--km-accent);
+    font-family: var(--km-font-mono);
+    font-size: 11px;
+    line-height: 1;
+    flex-shrink: 0;
+    border: 1px solid color-mix(in srgb, var(--km-accent) 40%, transparent);
+  }
+  .mode-chip[hidden] { display: none; }
 
   /* ── Results ── */
   .results {
@@ -208,7 +234,8 @@ TEMPLATE.innerHTML = `
           <path d="M9.5 9.5L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
       </span>
-      <input class="search" id="search" type="text" placeholder="Search commands, routes, components…" autocomplete="off" spellcheck="false"/>
+      <span class="mode-chip" id="mode-chip" hidden></span>
+      <input class="search" id="search" type="text" placeholder="Type > for actions · / for filters · name to search…" autocomplete="off" spellcheck="false"/>
       <span class="kbd-hint"><span class="key">Esc</span></span>
     </div>
 
@@ -220,6 +247,8 @@ TEMPLATE.innerHTML = `
       </span>
       <span class="footer-hint"><span class="key">↵</span> select</span>
       <span class="footer-hint"><span class="key">Esc</span> close</span>
+      <span class="footer-hint" style="margin-left:auto;"><span class="key">></span> actions</span>
+      <span class="footer-hint"><span class="key">/</span> filters</span>
     </div>
 
   </div>
@@ -236,9 +265,16 @@ export class KmCommandPalette extends HTMLElement {
 
     /** @type {Array<{label:string, items:Array}>} */
     this._groups    = [];
-    this._flatItems = [];  // all items in display order
+    /** All items flat, used as the search corpus. */
+    this._corpus    = [];
+    /** Search results after the current mode + query are applied. */
+    this._flatItems = [];
     this._activeIdx = -1;
     this._query     = '';
+    /** 'default' | 'action' | 'filter' */
+    this._mode      = 'default';
+    /** fuse.js searcher, rebuilt whenever setItems() is called. */
+    this._searcher  = null;
 
     this._onKeyDown  = this._onKeyDown.bind(this);
     this._onOverlay  = this._onOverlay.bind(this);
@@ -249,6 +285,7 @@ export class KmCommandPalette extends HTMLElement {
     this.shadowRoot.getElementById('overlay').addEventListener('click', this._onOverlay);
     this.shadowRoot.getElementById('search').addEventListener('input', (e) => {
       this._query = e.target.value;
+      this._applyMode(this._query);
       this._renderResults();
     });
   }
@@ -260,9 +297,11 @@ export class KmCommandPalette extends HTMLElement {
   attributeChangedCallback(name, _, val) {
     if (name === 'open' && val !== null) {
       this._query     = '';
+      this._mode      = 'default';
       this._activeIdx = -1;
       const inp = this.shadowRoot.getElementById('search');
       inp.value = '';
+      this._applyMode('');
       this._renderResults();
       requestAnimationFrame(() => inp.focus());
     }
@@ -275,41 +314,79 @@ export class KmCommandPalette extends HTMLElement {
   close() { this.removeAttribute('open'); }
 
   /**
-   * @param {Array<{label:string, items:Array<{id,label,icon?,description?,kbd?,action}>}>} groups
+   * @param {Array<{label:string, items:Array<{id,label,icon?,description?,kbd?,kind?,tags?,action}>}>} groups
    */
   setItems(groups) {
     this._groups    = groups;
-    this._flatItems = groups.flatMap(g => g.items);
+    this._corpus    = groups.flatMap(g => g.items);
+    this._searcher  = createSearcher(this._corpus);
     if (this.hasAttribute('open')) this._renderResults();
+  }
+
+  // ── Mode + query parsing ────────────────────────────────────────────────────
+
+  /**
+   * Inspect the raw query for a `>` or `/` mode prefix and update
+   * `_mode` + strip the prefix from the effective search string.
+   */
+  _applyMode(raw) {
+    const m = /^\s*([>/])\s*/.exec(raw ?? '');
+    if (!m) { this._mode = 'default'; return; }
+    this._mode = m[1] === '>' ? 'action' : 'filter';
+
+    const chip = this.shadowRoot.getElementById('mode-chip');
+    if (chip) { chip.textContent = m[1]; chip.hidden = false; }
+  }
+
+  /** Strip the mode prefix and return the remainder for the searcher. */
+  _stripPrefix(raw) {
+    return (raw ?? '').replace(/^\s*[>/]\s*/, '').trim();
   }
 
   // ── Rendering ───────────────────────────────────────────────────────────────
 
   _renderResults() {
-    const q       = this._query.toLowerCase().trim();
     const results = this.shadowRoot.getElementById('results');
+    const chip    = this.shadowRoot.getElementById('mode-chip');
+    if (chip) {
+      chip.hidden = this._mode === 'default';
+      chip.textContent = this._mode === 'action' ? '>' : this._mode === 'filter' ? '/' : '';
+    }
 
-    // Filter + score each group's items
-    const filteredGroups = this._groups.map(g => ({
-      label: g.label,
-      items: g.items.filter(item =>
-        !q ||
-        item.label.toLowerCase().includes(q) ||
-        (item.description ?? '').toLowerCase().includes(q) ||
-        (item.id ?? '').toLowerCase().includes(q)
-      ),
-    })).filter(g => g.items.length > 0);
+    // 1. Filter the corpus by the active mode.
+    const filtered = this._mode === 'action'
+      ? this._corpus.filter(it => it.kind === 'action')
+      : this._mode === 'filter'
+        ? this._corpus.filter(it => it.kind !== 'action')
+        : this._corpus;
 
-    // Rebuild flat list for keyboard navigation
-    this._flatItems = filteredGroups.flatMap(g => g.items);
+    // 2. Run fuzzy search over the mode-filtered set.
+    const searcher = createSearcher(filtered);
+    const stripped = this._stripPrefix(this._query);
+    const hits     = searcher.search(stripped, 60);
 
-    if (this._flatItems.length === 0) {
-      results.innerHTML = `<div class="empty">No results for "<strong>${esc(this._query)}</strong>"</div>`;
+    // 3. Group hits by their original group label, preserving display order.
+    const groupOrder = this._groups.map(g => g.label);
+    const grouped    = new Map();
+    for (const g of this._groups) grouped.set(g.label, []);
+    for (const hit of hits) {
+      const g = this._groups.find(g => g.items.includes(hit)) || this._groups[0];
+      if (!g) continue;
+      const bucket = grouped.get(g.label);
+      if (bucket) bucket.push(hit);
+    }
+    const filteredGroups = [...grouped.entries()]
+      .map(([label, items]) => ({ label, items }))
+      .filter(g => g.items.length > 0 && groupOrder.includes(g.label));
+
+    this._flatItems = hits;
+
+    if (hits.length === 0) {
+      results.innerHTML = `<div class="empty">No results for "<strong>${esc(stripped)}"</strong>${this._mode !== 'default' ? ` in <em>${this._mode}</em> mode` : ''}</div>`;
       this._activeIdx = -1;
       return;
     }
 
-    // Reset active if out of range
     if (this._activeIdx >= this._flatItems.length) this._activeIdx = 0;
     if (this._activeIdx < 0 && this._flatItems.length > 0) this._activeIdx = 0;
 
@@ -317,11 +394,13 @@ export class KmCommandPalette extends HTMLElement {
     results.innerHTML = filteredGroups.map(g => `
       <div class="group-label">${esc(g.label)}</div>
       ${g.items.map(item => {
-        const idx     = flatIdx++;
+        const idx      = flatIdx++;
         const isActive = idx === this._activeIdx;
-        const label   = q ? _highlight(item.label, q) : esc(item.label);
-        const desc    = item.description ? (q ? _highlight(item.description, q) : esc(item.description)) : '';
-        const kbd     = item.kbd ? item.kbd.map(k => `<span class="key">${esc(k)}</span>`).join('') : '';
+        const label    = _renderWithMatches(item.label, item._matches, 'label');
+        const desc     = item.description ? _renderWithMatches(item.description, item._matches, 'description') : '';
+        const kbd      = item.kbd ? item.kbd.map(k => `<span class="key">${esc(k)}</span>`).join('') : '';
+        const kindTag  = item.kind === 'action' ? '<span class="item-kbd"><span class="key">action</span></span>'
+                       : item.kind === 'filter' ? '<span class="item-kbd"><span class="key">filter</span></span>' : '';
         return `
           <div class="item${isActive ? ' active' : ''}" data-idx="${idx}" role="option" aria-selected="${isActive}">
             <div class="item-icon">
@@ -331,18 +410,15 @@ export class KmCommandPalette extends HTMLElement {
               <div class="item-label">${label}</div>
               ${desc ? `<div class="item-desc">${desc}</div>` : ''}
             </div>
-            ${kbd ? `<div class="item-kbd">${kbd}</div>` : ''}
+            ${kindTag || kbd ? `<div class="item-kbd">${kindTag}${kbd}</div>` : ''}
           </div>
         `;
       }).join('')}
     `).join('');
 
-    // Click handlers
     for (const el of results.querySelectorAll('.item[data-idx]')) {
       el.addEventListener('click', () => this._selectIdx(+el.dataset.idx));
     }
-
-    // Scroll active into view
     this._scrollActive();
   }
 
@@ -357,7 +433,7 @@ export class KmCommandPalette extends HTMLElement {
     this.close();
     this.dispatchEvent(new CustomEvent('km-palette-select', {
       bubbles: true, composed: true,
-      detail: { item },
+      detail: { item, mode: this._mode },
     }));
     item.action?.();
   }
@@ -419,13 +495,28 @@ function esc(s) {
   return d.innerHTML;
 }
 
-/** Wrap matching substring in <span class="match"> */
-function _highlight(text, query) {
-  const idx = text.toLowerCase().indexOf(query.toLowerCase());
-  if (idx < 0) return esc(text);
-  return esc(text.slice(0, idx))
-    + `<span class="match">${esc(text.slice(idx, idx + query.length))}</span>`
-    + esc(text.slice(idx + query.length));
+/**
+ * Render a string with fuse.js match indices wrapped in <span class="match">.
+ * Falls back to plain escaped text when no indices are available.
+ *
+ * @param {string} text
+ * @param {Array<{ key: string, indices: Array<[number, number]> }>} [matches]
+ * @param {string} [key]  — only use matches that target this key
+ */
+function _renderWithMatches(text, matches, key) {
+  if (!matches || !text) return esc(text);
+  const m = matches.find(m => m.key === key);
+  if (!m || !m.indices || m.indices.length === 0) return esc(text);
+
+  let out = '';
+  let cursor = 0;
+  for (const [start, end] of m.indices) {
+    if (start > cursor) out += esc(text.slice(cursor, start));
+    out += `<span class="match">${esc(text.slice(start, end + 1))}</span>`;
+    cursor = end + 1;
+  }
+  if (cursor < text.length) out += esc(text.slice(cursor));
+  return out;
 }
 
 function _defaultIcon() {

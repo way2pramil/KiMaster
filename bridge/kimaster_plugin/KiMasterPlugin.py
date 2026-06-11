@@ -16,8 +16,9 @@ import os
 
 _log = logging.getLogger("kimaster.plugin")
 
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-_ICON_PATH  = os.path.join(_PLUGIN_DIR, "resources", "icon.png")
+_PLUGIN_DIR   = os.path.dirname(os.path.abspath(__file__))
+_ICON_PATH    = os.path.join(_PLUGIN_DIR, "resources", "icon.png")
+_ICON_PATH_2X = os.path.join(_PLUGIN_DIR, "resources", "icon@2x.png")
 
 # Cached class + instance refs (module-level to survive GC)
 _PluginClass    = None
@@ -31,11 +32,26 @@ def create_and_register():
 
     Must be called from inside KiCad where ``import pcbnew`` succeeds.
     The ``__init__.py`` entry-point guards this with a try/except.
+
+    The running server reference is stored on the ``pcbnew`` module so it
+    survives ``importlib.reload()`` of *this* module.  Without this, each
+    rescan/reinstall resets the module-level globals, leaves the old server
+    bound to port 40001, and causes a new server to bind 40002 — resulting
+    in two duplicate bridge instances.
     """
     global _PluginClass, _plugin_instance
 
     if _plugin_instance is not None:
         return _plugin_instance
+
+    # ── Cross-reload server recovery ─────────────────────────────────────
+    # After importlib.reload() the module globals are reset, so
+    # _plugin_instance = None above.  But the OLD instance's WS server is
+    # still running (holding its port).  We stash the server on the pcbnew
+    # module (which persists across reloads) so we can recover it here.
+    import pcbnew as _pb
+    _ATTR  = "_kimaster_active_server"
+    _orphan = getattr(_pb, _ATTR, None)
 
     import pcbnew
 
@@ -59,14 +75,16 @@ def create_and_register():
                 self.name        = "KiMaster Bridge"
                 self.category    = "KiMaster"
                 self.description = (
-                    "Opens a local WebSocket server (port 40001) for "
-                    "real-time board sync with the KiMaster desktop app."
+                    "Opens a local WebSocket server (port auto-discovered "
+                    "40001–40010) for real-time board sync with KiMaster."
                 )
                 self.show_toolbar_button = True
-                self.icon_file_name = (
-                    _ICON_PATH if os.path.exists(_ICON_PATH) else ""
-                )
-                self.dark_icon_file_name = self.icon_file_name
+                # Use KiMaster brand icon (24x24 PNG with transparent background).
+                # KiCad uses icon_file_name for light theme, dark_icon_file_name
+                # for dark theme.  We use the same icon for both since the
+                # KiMaster logo works on either background.
+                self.icon_file_name      = _ICON_PATH    if os.path.exists(_ICON_PATH)    else ""
+                self.dark_icon_file_name = _ICON_PATH    if os.path.exists(_ICON_PATH)    else ""
 
             def Run(self):
                 """Called when the user activates the plugin."""
@@ -74,8 +92,19 @@ def create_and_register():
 
         _PluginClass = KiMasterActionPlugin
 
-    # Normal instantiation path: __init__() -> defaults() -> self.name set
     _plugin_instance = _PluginClass()
+
+    # ── Reattach orphaned server ──────────────────────────────────────────
+    # If the module was reloaded (Rescan Plugins / reinstall), the previous
+    # instance's server is still alive.  Reattach it to the new instance so
+    # we don't create a second server on a different port.
+    if _orphan is not None and _orphan.is_running():
+        _plugin_instance._km_ws_server = _orphan
+        _log.info(
+            "KiMaster: reattached orphaned server on port %d after module reload",
+            _orphan.port,
+        )
+
     _plugin_instance.register()
     _log.info("KiMaster bridge plugin registered with KiCad")
     return _plugin_instance
@@ -110,21 +139,137 @@ def _notify(message, caption="KiMaster", is_error=False):
         pass  # Last resort — already logged above
 
 
+def _ask_stop_or_refresh(port: int, client_count: int) -> str:
+    """
+    Show a wx dialog asking the user whether to Stop or Refresh the bridge.
+    Returns "stop" or "refresh".  Falls back to "refresh" if wx is unavailable.
+    """
+    try:
+        import wx
+        client_info = (
+            f"{client_count} client{'s' if client_count != 1 else ''} connected"
+            if client_count > 0
+            else "no clients connected"
+        )
+        dlg = wx.MessageDialog(
+            None,
+            f"KiMaster bridge is running on port {port} ({client_info}).\n\n"
+            "• Stop  — closes the WebSocket server and frees the port.\n"
+            "• Refresh — broadcast updated board state to connected clients.",
+            "KiMaster Bridge",
+            wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION
+            | wx.YES_DEFAULT,
+        )
+        dlg.SetYesNoLabels("Stop server", "Refresh board state")
+        result = dlg.ShowModal()
+        dlg.Destroy()
+        if result == wx.ID_YES:
+            return "stop"
+        return "refresh"
+    except Exception:
+        # No wx / headless → default to refresh (safe)
+        return "refresh"
+
+
+def _stop_bridge(self):
+    """
+    Gracefully stop all bridge components: watchers, WS server, title bar.
+    Clears the pcbnew-level registry so a fresh start works cleanly.
+    """
+    port = getattr(self._km_ws_server, "port", "?") if self._km_ws_server else "?"
+
+    for watcher in (self._km_watcher, self._km_board_watcher):
+        try:
+            if watcher is not None:
+                watcher.stop()
+        except Exception as e:
+            _log.debug("KiMaster: watcher stop error: %s", e)
+    self._km_watcher       = None
+    self._km_board_watcher = None
+
+    if self._km_ws_server is not None:
+        try:
+            self._km_ws_server.stop()
+        except Exception as e:
+            _log.debug("KiMaster: server stop error: %s", e)
+        self._km_ws_server = None
+
+    # Clear pcbnew-level registry
+    try:
+        import pcbnew as _pb
+        setattr(_pb, "_kimaster_active_server", None)
+    except Exception:
+        pass
+
+    # Reset KiCad title bar
+    try:
+        import wx
+        wx.CallAfter(_clear_kicad_title)
+    except Exception:
+        pass
+
+    _log.info("KiMaster bridge stopped (was on port %s)", port)
+    _notify(
+        f"KiMaster bridge stopped.\n"
+        f"Port {port} is now closed — no external access possible."
+    )
+
+
+def _clear_kicad_title():
+    """Remove the KiMaster status suffix from the KiCad window title."""
+    try:
+        import wx
+        for w in wx.GetTopLevelWindows():
+            title = w.GetTitle()
+            if " — KiMaster" in title:
+                w.SetTitle(title[: title.index(" — KiMaster")])
+            break
+    except Exception:
+        pass
+
+
 # ── Run logic (kept outside the class to reduce nested indentation) ────────
 
 def _run_plugin(self):
     """Core logic executed when the user clicks the toolbar button."""
     import pcbnew as _pb
 
-    # If already running — notify the user and re-broadcast board state
+    _ATTR = "_kimaster_active_server"
+
+    # ── If already running: offer Stop / Refresh choice ─────────────────
     if self._km_ws_server is not None and self._km_ws_server.is_running():
-        _log.info("KiMaster bridge already running — broadcasting board state")
-        self._km_ws_server.broadcast_board_state()
-        _notify(
-            f"KiMaster bridge is already active on port {self._km_ws_server.port}.\n"
-            "Board state refreshed."
+        port    = self._km_ws_server.port
+        clients = self._km_ws_server.client_count
+        choice  = _ask_stop_or_refresh(port, clients)
+
+        if choice == "stop":
+            _stop_bridge(self)
+            return
+        else:
+            # Refresh — broadcast fresh board state
+            _log.info("KiMaster bridge refresh requested")
+            self._km_ws_server.broadcast_board_state()
+            _notify(
+                f"KiMaster bridge is active on port {port}.\n"
+                f"Board state refreshed ({clients} client(s) connected)."
+            )
+            return
+
+    # Check for an orphaned server from a previous module load that somehow
+    # wasn't caught at create_and_register time.
+    _orphan = getattr(_pb, _ATTR, None)
+    if _orphan is not None and _orphan is not self._km_ws_server and _orphan.is_running():
+        _log.warning(
+            "KiMaster: found orphaned server on port %d — stopping it before starting a new one",
+            _orphan.port,
         )
-        return
+        _orphan.stop()
+        setattr(_pb, _ATTR, None)
+
+    # Also stop our own stale server (died but not cleaned up)
+    if self._km_ws_server is not None and not self._km_ws_server.is_running():
+        self._km_ws_server.stop()
+        self._km_ws_server = None
 
     try:
         from .BoardExporter import BoardExporter
@@ -154,8 +299,16 @@ def _run_plugin(self):
     self._km_exporter = BoardExporter()
     self._km_exporter.attach_board(board)
 
-    self._km_ws_server = KiMasterWsServer(self._km_exporter)
+    from .SchematicExporter import SchematicExporter
+    sch_exporter = SchematicExporter()
+    sch_exporter.attach_pcb_path(str(board.GetFileName()))
+
+    self._km_ws_server = KiMasterWsServer(self._km_exporter, sch_exporter)
     self._km_ws_server.start()
+
+    # Store in pcbnew module so it survives importlib.reload() of this module
+    import pcbnew as _pb2
+    setattr(_pb2, "_kimaster_active_server", self._km_ws_server)
 
     # Selection watcher — polls KiCad selection, broadcasts changes
     self._km_watcher = SelectionWatcher(self._km_ws_server, poll_ms=500)

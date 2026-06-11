@@ -20,6 +20,7 @@
 
 import { store, subscribe } from '../../../core/State.js';
 import { Logger            } from '../../../core/Logger.js';
+import { notify            } from '../../../core/Notify.js';
 import {
   loadNotes, scheduleAutoSave,
   loadTasks, addTask, toggleTask, deleteTask,
@@ -874,6 +875,7 @@ export class KmNotesEditor extends HTMLElement {
         this._renderTasks();
       } catch (err) {
         Logger.error('NotesEditor', 'Failed to add task', err);
+        notify({ type: 'error', title: 'Add Task Failed', message: String(err?.message ?? err) });
       } finally {
         this._taskBusy = false;
       }
@@ -917,6 +919,7 @@ export class KmNotesEditor extends HTMLElement {
           this._renderTasks();
         } catch (err) {
           Logger.error('NotesEditor', 'Failed to toggle task', err);
+          notify({ type: 'error', title: 'Task Update Failed', message: String(err?.message ?? err) });
         } finally {
           this._taskBusy = false;
         }
@@ -930,6 +933,7 @@ export class KmNotesEditor extends HTMLElement {
           this._renderTasks();
         } catch (err) {
           Logger.error('NotesEditor', 'Failed to delete task', err);
+          notify({ type: 'error', title: 'Delete Task Failed', message: String(err?.message ?? err) });
         } finally {
           this._taskBusy = false;
         }

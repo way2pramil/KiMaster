@@ -65,6 +65,20 @@ pub fn open_db(kimaster_dir: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Open (or create) the global SQLite database at `~/.kimaster/global.sqlite`.
+/// This is where the cross-project recent-projects list lives.
+pub fn open_global_db() -> Result<Connection> {
+    let home = dirs::home_dir().context("Cannot resolve home directory")?;
+    let global_dir = home.join(".kimaster");
+    std::fs::create_dir_all(&global_dir)
+        .with_context(|| format!("Cannot create {:?}", global_dir))?;
+    let db_path = global_dir.join("global.sqlite");
+    let conn = Connection::open(&db_path)
+        .with_context(|| format!("Cannot open global DB at {:?}", db_path))?;
+    migrate(&conn)?;
+    Ok(conn)
+}
+
 // ── Migrations ────────────────────────────────────────────────────────────────
 
 fn migrate(conn: &Connection) -> Result<()> {

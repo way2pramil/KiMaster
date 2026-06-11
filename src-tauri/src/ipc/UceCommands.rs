@@ -10,6 +10,7 @@ use crate::modules::uce::{
     self, AddToVaultResult,
     LcscClient::{LcscClient, SearchResponse},
     LibraryVault::{VaultEntry, get_vault_contents, remove_from_vault, is_in_vault},
+    LibTableManager,
     PostProcessor::PostProcessConfig,
     VaultManager::{
         StackupEntry, StackupConfig,
@@ -208,9 +209,31 @@ pub async fn cmd_uce_add_to_vault(
         .unwrap_or_default();
 
     // Write to global vault + project vault (if open) in one fetch
-    uce::add_to_vaults(&client, &vault_dirs, &resolved_id, &cfg)
+    let mut result = uce::add_to_vaults(&client, &vault_dirs, &resolved_id, &cfg)
         .await
-        .map_err(|e| format!("Add to vault failed: {e}"))
+        .map_err(|e| format!("Add to vault failed: {e}"))?;
+
+    // Register KiMaster in project lib tables (sym-lib-table + fp-lib-table).
+    // Only possible when a project is open; silently skipped otherwise.
+    let (project_dir, primary_vault) = {
+        let inner = state.0.lock().map_err(|e| format!("State lock: {e}"))?;
+        let proj_dir = inner.active_project.as_ref()
+            .and_then(|p| std::path::Path::new(&p.path).parent().map(|d| d.to_path_buf()));
+        let vault    = vault_dirs.first().map(std::path::PathBuf::from);
+        (proj_dir, vault)
+    };
+
+    if let (Some(proj_dir), Some(vault_dir)) = (project_dir, primary_vault) {
+        match LibTableManager::ensure_kimaster_libraries(&proj_dir, &vault_dir) {
+            Ok(reg) => {
+                result.lib_registered            = true;
+                result.lib_registered_first_time = reg.any_new();
+            }
+            Err(e) => tracing::warn!("[LibTable] Registration skipped: {e}"),
+        }
+    }
+
+    Ok(result)
 }
 
 // ── Vault contents ────────────────────────────────────────────────────────────

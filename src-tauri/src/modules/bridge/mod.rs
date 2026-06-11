@@ -1,5 +1,5 @@
 //! Python plugin WebSocket bridge — Phase 3.
-//! WsClient manages the async connection. BridgeInstaller copies the plugin.
+//! WsClient manages the async connection. BridgeInstaller writes the plugin.
 
 pub mod WsClient;
 
@@ -9,6 +9,34 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use serde::Serialize;
 use crate::AppConfig;
+
+// ── Embedded plugin files ─────────────────────────────────────────────────────
+// All Python source files are baked into the binary at compile time.
+// No external resource directory is needed at runtime.
+
+const PLUGIN_FILES: &[(&str, &str)] = &[
+    ("__init__.py",          include_str!("../../../../bridge/kimaster_plugin/__init__.py")),
+    ("KiMasterPlugin.py",    include_str!("../../../../bridge/kimaster_plugin/KiMasterPlugin.py")),
+    ("WsServer.py",          include_str!("../../../../bridge/kimaster_plugin/WsServer.py")),
+    ("BoardExporter.py",     include_str!("../../../../bridge/kimaster_plugin/BoardExporter.py")),
+    ("BoardChangeWatcher.py",include_str!("../../../../bridge/kimaster_plugin/BoardChangeWatcher.py")),
+    ("SelectionWatcher.py",  include_str!("../../../../bridge/kimaster_plugin/SelectionWatcher.py")),
+    ("SchematicExporter.py", include_str!("../../../../bridge/kimaster_plugin/SchematicExporter.py")),
+    ("metadata.json",        include_str!("../../../../bridge/kimaster_plugin/metadata.json")),
+    // Board-ops package — imported by WsServer.py as `from .ops import ViaStitch, Teardrops, Panelize`.
+    // Written into an `ops/` subdirectory by write_embedded_plugin (path contains '/').
+    ("ops/__init__.py",      include_str!("../../../../bridge/kimaster_plugin/ops/__init__.py")),
+    ("ops/ViaStitch.py",     include_str!("../../../../bridge/kimaster_plugin/ops/ViaStitch.py")),
+    ("ops/Teardrops.py",     include_str!("../../../../bridge/kimaster_plugin/ops/Teardrops.py")),
+    ("ops/Panelize.py",      include_str!("../../../../bridge/kimaster_plugin/ops/Panelize.py")),
+];
+
+/// Binary plugin assets (icons) — referenced by KiMasterPlugin.py via
+/// `resources/icon.png` / `resources/icon@2x.png`.
+const PLUGIN_BINARY_FILES: &[(&str, &[u8])] = &[
+    ("resources/icon.png",    include_bytes!("../../../../bridge/kimaster_plugin/resources/icon.png")),
+    ("resources/icon@2x.png", include_bytes!("../../../../bridge/kimaster_plugin/resources/icon@2x.png")),
+];
 
 /// Info about one discovered KiCad bridge instance (one running KiCad with plugin active).
 #[derive(Debug, Clone, Serialize)]
@@ -33,49 +61,57 @@ pub fn plugin_install_dir(home_dir: &Path) -> PathBuf {
 
 // ── Plugin install ────────────────────────────────────────────────────────────
 
-/// Copy the bundled bridge plugin to the KiCad scripting plugins directory.
+/// Write the embedded bridge plugin files to the KiCad scripting plugins directory.
 /// Does NOT remove existing files — use `reinstall_bridge_plugin` for a clean wipe.
-pub fn install_bridge_plugin(
-    plugin_src_dir: &Path,
-    home_dir: &Path,
-) -> Result<PathBuf, String> {
+pub fn install_bridge_plugin(home_dir: &Path) -> Result<PathBuf, String> {
     let dest = plugin_install_dir(home_dir);
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("Cannot create plugin dir '{}': {e}", dest.display()))?;
-    copy_dir_recursive(plugin_src_dir, &dest)?;
+    write_embedded_plugin(&dest)?;
     tracing::info!("Bridge plugin installed to '{}'", dest.display());
     Ok(dest)
 }
 
-/// **Clean** reinstall: wipe the existing plugin directory, copy fresh files,
+/// **Clean** reinstall: wipe the existing plugin directory, write fresh embedded files,
 /// then remove all Python bytecode caches so KiCad recompiles from source.
-///
-/// This is the recommended action when the plugin misbehaves or an update ships.
-pub fn reinstall_bridge_plugin(
-    plugin_src_dir: &Path,
-    home_dir: &Path,
-) -> Result<PathBuf, String> {
+pub fn reinstall_bridge_plugin(home_dir: &Path) -> Result<PathBuf, String> {
     let dest = plugin_install_dir(home_dir);
 
-    // 1. Remove old installation entirely
     if dest.exists() {
         std::fs::remove_dir_all(&dest)
             .map_err(|e| format!("Cannot remove old plugin at '{}': {e}", dest.display()))?;
         tracing::info!("Removed old plugin from '{}'", dest.display());
     }
 
-    // 2. Create fresh directory
     std::fs::create_dir_all(&dest)
         .map_err(|e| format!("Cannot create plugin dir '{}': {e}", dest.display()))?;
-
-    // 3. Copy new files
-    copy_dir_recursive(plugin_src_dir, &dest)?;
-
-    // 4. Clear Python bytecode caches so KiCad loads fresh source
+    write_embedded_plugin(&dest)?;
     clear_pycache(&dest);
 
     tracing::info!("Bridge plugin cleanly reinstalled to '{}'", dest.display());
     Ok(dest)
+}
+
+/// Write all embedded plugin files to `dest/`. Filenames may contain `/`
+/// (e.g. `ops/ViaStitch.py`) — parent directories are created as needed.
+fn write_embedded_plugin(dest: &Path) -> Result<(), String> {
+    for (filename, content) in PLUGIN_FILES {
+        write_one(dest, filename, content.as_bytes())?;
+    }
+    for (filename, bytes) in PLUGIN_BINARY_FILES {
+        write_one(dest, filename, bytes)?;
+    }
+    Ok(())
+}
+
+fn write_one(dest: &Path, filename: &str, bytes: &[u8]) -> Result<(), String> {
+    let path = dest.join(filename);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create dir '{}': {e}", parent.display()))?;
+    }
+    std::fs::write(&path, bytes)
+        .map_err(|e| format!("Cannot write '{}': {e}", path.display()))
 }
 
 /// Recursively delete `__pycache__/` dirs and `.pyc` / `.pyo` files.
@@ -126,22 +162,41 @@ pub async fn scan_bridge_instances(start_port: u16, count: u16) -> Vec<KiCadInst
         }
     }
 
-    // Sort by port for deterministic ordering
+    // Sort by port so lowest port (original activation) comes first
     instances.sort_by_key(|i| i.port);
+
+    // Deduplicate by board_name: two ports serving the same .kicad_pcb file
+    // means the plugin was activated twice in the same KiCad session (e.g.,
+    // after Rescan Plugins without a full restart).  Keep the lowest port —
+    // that's the original (and only intentional) server.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    instances.retain(|inst| {
+        let key = inst.board_name.as_deref().unwrap_or("")
+            .to_lowercase()
+            .replace('\\', "/");
+        // insert() returns true the FIRST time (keep it), false for duplicates (drop)
+        if key.is_empty() {
+            true  // no board name — can't dedup, keep all
+        } else {
+            seen.insert(key)
+        }
+    });
+
     instances
 }
 
-/// Probe one port: TCP → WebSocket handshake → read messages until bridge identified.
+/// Probe one port: TCP → WS handshake → send probe hello → read hello_ack.
 ///
-/// The KiMaster Python plugin sends `board_state` **immediately on connect**
-/// before it even reads the client's `hello` message.  So the message sequence
-/// from our perspective is:
+/// Updated protocol (probe-aware plugin):
 ///   1. We connect
-///   2. Plugin → us: `board_state`   (unsolicited, contains board file + nets)
-///   3. Plugin → us: `hello_ack`     (response to our hello, contains kicad_version)
+///   2. We send `{"type":"hello","client":"kimaster-probe",...}` immediately
+///   3. Plugin reads our hello FIRST, detects it is a probe
+///   4. Plugin → us: `hello_ack`  (board_name + kicad_version, no board data)
+///   5. Plugin closes its side
 ///
-/// We accept a port as a valid bridge as soon as we receive EITHER message type.
-/// Board name comes from whichever arrives first.
+/// The plugin's `_handler` now reads the hello before sending anything.
+/// Probe connections bypass the MAX_CLIENTS=1 guard — they never receive
+/// board data, just enough metadata for the scan to identify the bridge.
 async fn probe_port(port: u16) -> Option<KiCadInstance> {
     use tokio::net::TcpStream;
     use tokio::time::{timeout, Instant};
@@ -151,7 +206,7 @@ async fn probe_port(port: u16) -> Option<KiCadInstance> {
 
     let addr = format!("127.0.0.1:{port}");
 
-    // Step 1: TCP reachability — short timeout so we don't block on closed ports
+    // Step 1: TCP reachability — very short timeout (closed ports fail fast)
     let stream = timeout(
         Duration::from_millis(150),
         TcpStream::connect(&addr),
@@ -164,18 +219,19 @@ async fn probe_port(port: u16) -> Option<KiCadInstance> {
         client_async(ws_url, stream),
     ).await.ok()?.ok()?;
 
-    // Step 3: Send hello (plugin will respond after it sends its initial board_state)
+    // Step 3: Send probe hello IMMEDIATELY (plugin waits for this before doing anything)
     let hello = serde_json::json!({
-        "type": "hello",
-        "client": "kimaster-probe",
+        "type":    "hello",
+        "client":  "kimaster-probe",
         "version": "0.1.0"
     });
     if ws.send(Message::Text(hello.to_string().into())).await.is_err() {
         return None;
     }
 
-    // Step 4: Read messages until we identify the bridge or the deadline passes.
-    // We may receive board_state BEFORE hello_ack — accept either as confirmation.
+    // Step 4: Wait for hello_ack — the only response a probe receives.
+    // The plugin may also send an error if it's an older version without probe
+    // support; in that case we fall back to accepting board_state too.
     let deadline = Instant::now() + Duration::from_millis(1200);
     let mut board_name:    Option<String> = None;
     let mut kicad_version: Option<String> = None;
@@ -190,27 +246,28 @@ async fn probe_port(port: u16) -> Option<KiCadInstance> {
         let Ok(val) = serde_json::from_str::<Value>(&text) else { continue };
 
         match val["type"].as_str() {
+            Some("hello_ack") => {
+                kicad_version = val["kicad_version"].as_str().map(String::from);
+                board_name    = val["pcb_path"].as_str()
+                    .or_else(|| val["board"].as_str())
+                    .map(String::from);
+                confirmed = true;
+                break;
+            }
+            // Fallback: older plugin versions still send board_state first
             Some("board_state") => {
-                // Plugin sent initial board state — we know this is a live bridge.
-                // Extract board file path from the state payload.
                 let data = &val["data"];
                 board_name = data["file_name"].as_str()
                     .or_else(|| data["board_name"].as_str())
-                    .or_else(|| val["board_name"].as_str())
                     .map(String::from);
                 confirmed = true;
-                // Keep reading — hello_ack may follow with kicad_version
+                // Keep reading — hello_ack may follow
             }
-            Some("hello_ack") => {
-                // Plugin responded to our hello — confirms bridge + gives version
-                kicad_version = val["kicad_version"].as_str().map(String::from);
-                if board_name.is_none() {
-                    board_name = val["pcb_path"].as_str()
-                        .or_else(|| val["board"].as_str())
-                        .map(String::from);
-                }
-                confirmed = true;
-                break; // hello_ack is the final confirmation — no need to read more
+            Some("error") => {
+                // Older plugin at capacity (no probe-aware code yet) —
+                // something IS running on this port; break without board details
+                tracing::debug!("Bridge probe on port {port}: received error (older plugin?)");
+                break;
             }
             _ => continue,
         }
@@ -225,24 +282,3 @@ async fn probe_port(port: u16) -> Option<KiCadInstance> {
     }
 }
 
-// ── Internal helpers ─────────────────────────────────────────────────────────
-
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    for entry in std::fs::read_dir(src)
-        .map_err(|e| format!("Cannot read '{}': {e}", src.display()))?
-    {
-        let entry    = entry.map_err(|e| e.to_string())?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if src_path.is_dir() {
-            std::fs::create_dir_all(&dst_path).map_err(|e| e.to_string())?;
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path).map_err(|e| {
-                format!("Copy '{}' → '{}': {e}", src_path.display(), dst_path.display())
-            })?;
-        }
-    }
-    Ok(())
-}

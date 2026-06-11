@@ -21,19 +21,21 @@ import { store } from '../../core/State.js';
 import { Logger } from '../../core/Logger.js';
 import {
   BRIDGE_CONNECTED, BRIDGE_DISCONNECTED, BRIDGE_BOARD_STATE,
-  BRIDGE_BOARD_CHANGED, BRIDGE_SELECTION, BRIDGE_NET_INFO,
-  BRIDGE_OP_RESULT, BRIDGE_ERROR, BRIDGE_POLL_INTERVALS,
-  BRIDGE_PROJECT_MISMATCH,
+  BRIDGE_SCHEMATIC_STATE, BRIDGE_BOARD_CHANGED, BRIDGE_SELECTION,
+  BRIDGE_NET_INFO, BRIDGE_OP_RESULT, BRIDGE_ERROR, BRIDGE_POLL_INTERVALS,
+  BRIDGE_PROJECT_MISMATCH, BRIDGE_SERVER_STOPPED, BRIDGE_STACKUP_DATA,
 } from '../../core/AppEvents.js';
 import {
   BRIDGE_CONNECT, BRIDGE_DISCONNECT, BRIDGE_SEND,
   BRIDGE_REQUEST_BOARD_STATE,
-  BRIDGE_GET_BOARD_STATE, BRIDGE_HIGHLIGHT_COMPONENT, BRIDGE_HIGHLIGHT_NET,
-  BRIDGE_REQUEST_NET_INFO, BRIDGE_REGENERATE_ZONES,
+  BRIDGE_GET_BOARD_STATE, BRIDGE_REQUEST_SCHEMATIC_STATE,
+  BRIDGE_GET_SCHEMATIC_STATE, BRIDGE_HIGHLIGHT_COMPONENT, BRIDGE_HIGHLIGHT_NET,
+  BRIDGE_REQUEST_NET_INFO, BRIDGE_REQUEST_STACKUP, BRIDGE_REGENERATE_ZONES,
   BRIDGE_PURGE_ORPHAN_VIAS,
   BRIDGE_CLEAR_HIGHLIGHT, INSTALL_BRIDGE_PLUGIN, GET_PLUGIN_INSTALL_PATH,
   BRIDGE_MOVE_COMPONENT, BRIDGE_ROTATE_COMPONENT,
   BRIDGE_SET_LOCKED, BRIDGE_SET_DNP,
+  SCAN_KICAD_INSTANCES,
 } from '../../core/AppCommands.js';
 
 /** @type {Function|null} unsubscribe handle from Tauri event listener */
@@ -91,16 +93,19 @@ export async function initBridgeListeners() {
 
   // Register all bridge event listeners using AppEvents constants (no raw strings)
   const unsubs = await Promise.all([
-    tauriListen(BRIDGE_CONNECTED,     (e) => _onConnected(e.payload)),
-    tauriListen(BRIDGE_DISCONNECTED,  ()  => _onDisconnected()),
-    tauriListen(BRIDGE_BOARD_STATE,   (e) => _onBoardState(e.payload)),
-    tauriListen(BRIDGE_BOARD_CHANGED, ()  => _onBoardChanged()),
-    tauriListen(BRIDGE_SELECTION,     (e) => _onSelection(e.payload)),
-    tauriListen(BRIDGE_NET_INFO,      (e) => _onNetInfo(e.payload)),
-    tauriListen(BRIDGE_OP_RESULT,       (e) => _onOpResult(e.payload)),
-    tauriListen(BRIDGE_ERROR,           (e) => _onBridgeError(e.payload)),
-    tauriListen(BRIDGE_POLL_INTERVALS,  (e) => _onPollIntervals(e.payload)),
-    tauriListen(BRIDGE_PROJECT_MISMATCH,(e) => _onProjectMismatch(e.payload)),
+    tauriListen(BRIDGE_CONNECTED,        (e) => _onConnected(e.payload)),
+    tauriListen(BRIDGE_DISCONNECTED,     ()  => _onDisconnected()),
+    tauriListen(BRIDGE_BOARD_STATE,      (e) => _onBoardState(e.payload)),
+    tauriListen(BRIDGE_SCHEMATIC_STATE,  (e) => _onSchematicState(e.payload)),
+    tauriListen(BRIDGE_BOARD_CHANGED,    ()  => _onBoardChanged()),
+    tauriListen(BRIDGE_SELECTION,        (e) => _onSelection(e.payload)),
+    tauriListen(BRIDGE_NET_INFO,         (e) => _onNetInfo(e.payload)),
+    tauriListen(BRIDGE_STACKUP_DATA,     (e) => _onStackupData(e.payload)),
+    tauriListen(BRIDGE_OP_RESULT,        (e) => _onOpResult(e.payload)),
+    tauriListen(BRIDGE_ERROR,            (e) => _onBridgeError(e.payload)),
+    tauriListen(BRIDGE_POLL_INTERVALS,   (e) => _onPollIntervals(e.payload)),
+    tauriListen(BRIDGE_PROJECT_MISMATCH, (e) => _onProjectMismatch(e.payload)),
+    tauriListen(BRIDGE_SERVER_STOPPED,   (e) => _onServerStopped(e.payload)),
   ]);
 
   _unlisten = () => unsubs.forEach(fn => fn());
@@ -128,6 +133,13 @@ let _autoConnectTimer = null;
 export function startAutoConnect(intervalMs = 3000) {
   if (_autoConnectTimer) return; // already running
   if (store.bridgeConnected) return; // already connected
+  if (store.bridgeManuallyDisconnected) {
+    // User clicked Disconnect — respect that until they explicitly connect
+    // again. Polling would just snap the connection back on, which is
+    // exactly what the user told us not to do.
+    Logger.debug('Bridge', 'Auto-connect skipped: user manually disconnected');
+    return;
+  }
 
   Logger.info('Bridge', 'Auto-connect started (every ' + (intervalMs / 1000) + 's)');
 
@@ -137,7 +149,7 @@ export function startAutoConnect(intervalMs = 3000) {
       return;
     }
     try {
-      await connectBridge(40001);
+      await connectBridge(store.bridgePort || 40001);
       // connectBridge succeeded → Rust task is running, actual connection
       // result arrives via bridge:connected event. Auto-connect will stop
       // when _onConnected sets store.bridgeConnected = true.
@@ -162,18 +174,42 @@ function _stopAutoConnect() {
 // ── Connect / Disconnect ──────────────────────────────────────────────────────
 
 /**
- * Show the connection gate modal, then connect if user approves.
- * This is the entry point for user-initiated connections.
- * @param {number} [port=40001]
+ * Single entry point for all user-initiated connect actions.
+ *
+ * Scans ports 40001–40010 for a running KiMaster bridge plugin, then
+ * connects to the first found instance (or the explicitly supplied port).
+ * All UI connect buttons — Dashboard, Bridge panel, Settings — call this.
+ *
+ * @param {{ port?: number }} [opts]
+ *   port — skip the scan and connect to this specific port directly.
+ * @throws {Error} if no instances are found and no port was given.
  */
-export async function showConnectGate(port = 40001) {
+export async function connectKiCad({ port } = {}) {
+  if (!port) {
+    const instances = await invokeNow(SCAN_KICAD_INSTANCES).catch(() => []);
+    if (!instances?.length) {
+      throw new Error(
+        'No KiCad bridge plugin found on ports 40001–40010.\n' +
+        'Open KiCad and activate the plugin: Tools → External Plugins → KiMaster Bridge.'
+      );
+    }
+    port = instances[0].port;
+  }
+  return connectBridge(port);
+}
+
+/**
+ * Show the connection gate modal, then scan + connect if user approves.
+ * Used by the Dashboard hero button for a first-time confirmation UX.
+ */
+export async function showConnectGate() {
   const { BridgeConnectGate } = await import('../../components/features/Bridge/index.js');
   const approved = await BridgeConnectGate.show();
   if (!approved) {
     Logger.debug('Bridge', 'Connection cancelled by user');
     return;
   }
-  return connectBridge(port);
+  return connectKiCad();
 }
 
 /**
@@ -181,6 +217,10 @@ export async function showConnectGate(port = 40001) {
  * @param {number} [port=40001]
  */
 export async function connectBridge(port = 40001) {
+  // Any explicit connect attempt — manual click or auto-connect poll —
+  // clears the manual-disconnect latch so future disconnects are free to
+  // resume auto-connect.
+  store.bridgeManuallyDisconnected = false;
   try {
     const result = await invokeNow(BRIDGE_CONNECT, { port });
     Logger.info('Bridge', 'Connect requested', result.message);
@@ -193,6 +233,10 @@ export async function connectBridge(port = 40001) {
 
 /** Disconnect from the bridge plugin. */
 export async function disconnectBridge() {
+  // Set the latch *first* so any in-flight _onDisconnected that arrives
+  // before the await resolves will see it and skip the auto-restart.
+  store.bridgeManuallyDisconnected = true;
+  _stopAutoConnect();
   try {
     await invokeNow(BRIDGE_DISCONNECT);
     store.bridgeConnected = false;
@@ -302,6 +346,20 @@ export function getBoardState() {
   return invokeNow(BRIDGE_GET_BOARD_STATE);
 }
 
+/**
+ * Ask the plugin to parse the .kicad_sch file and push schematic state.
+ * Result arrives asynchronously via `bridge:schematic_state` → `store.schematicState`.
+ */
+export function requestSchematicState() {
+  store.schematicState = { loading: true };
+  return invoke(BRIDGE_REQUEST_SCHEMATIC_STATE);
+}
+
+/** Get the last cached schematic state (from Rust state, not live). */
+export function getSchematicState() {
+  return invokeNow(BRIDGE_GET_SCHEMATIC_STATE);
+}
+
 /** Install the bridge plugin to the KiCad scripting plugins directory. */
 export function installBridgePlugin() {
   return invokeNow(INSTALL_BRIDGE_PLUGIN);
@@ -362,16 +420,20 @@ export function setDnp(reference, dnp) {
 /** @param {BridgeConnectedPayload} payload */
 function _onConnected(payload) {
   Logger.info('Bridge', 'Connected', payload);
-  store.bridgeConnected      = true;
-  store.bridgeKicadVersion   = payload.kicad_version || null;
-  store.bridgeBoardName      = payload.board_name    || null;
-  // Clear any stale mismatch warning from a previous session
+  store.bridgeConnected       = true;
+  store.bridgePort            = payload.port || 40001;
+  store.bridgeKicadVersion    = payload.kicad_version  || null;
+  store.bridgeBoardName       = payload.board_name     || null;
+  store.bridgePluginVersion   = payload.plugin_version || null;
   store.bridgeProjectMismatch = null;
+  // New connection — clear the "user stopped server" flag, resume normal operation
+  store.bridgeServerStopped   = false;
 
   _stopAutoConnect();
 
-  // Immediately request full board state
+  // Immediately request full board + schematic state
   requestBoardState().catch(() => {});
+  requestSchematicState().catch(() => {});
 }
 
 function _onDisconnected() {
@@ -380,9 +442,34 @@ function _onDisconnected() {
   store.bridgeKicadVersion    = null;
   store.bridgeBoardName       = null;
   store.bridgeProjectMismatch = null;
+  store.schematicState        = null;
+  store.schematicComponents   = [];
+  store.schematicNetLabels    = [];
 
-  // Resume auto-connect so we reconnect when KiCad restarts
-  startAutoConnect();
+  // Resume auto-connect — UNLESS the user explicitly stopped the server in KiCad,
+  // OR the user clicked Disconnect in the UI (manual latch).
+  if (!store.bridgeServerStopped && !store.bridgeManuallyDisconnected) {
+    startAutoConnect();
+  }
+}
+
+/**
+ * User clicked "Stop server" in the KiCad plugin dialog.
+ * The server sent a `server_stopping` message, Rust forwarded it as this event.
+ *
+ * Key difference from _onDisconnected:
+ *  - We do NOT restart auto-connect (user deliberately closed the port)
+ *  - We set `bridgeServerStopped = true` so the UI can show a clear banner
+ *    instead of the generic "reconnecting…" spinner
+ *  - User must manually re-activate the plugin in KiCad to reconnect
+ */
+function _onServerStopped(payload) {
+  Logger.info('Bridge', 'Server stopped intentionally by user in KiCad');
+  store.bridgeConnected     = false;
+  store.bridgeServerStopped = true;     // tells UI: don't show "reconnecting"
+  store.bridgeBoardName     = null;
+  store.bridgeProjectMismatch = null;
+  _stopAutoConnect();
 }
 
 /**
@@ -413,6 +500,21 @@ function _onBoardState(data) {
   Logger.info('Bridge', `Board state: ${store.boardComponents.length} components, ${store.boardNets.length} nets, diag: ${(data._diag || []).join(' | ')}`);
 }
 
+/**
+ * @param {{
+ *   sch_path: string|null,
+ *   symbols: object[], components: object[], net_labels: object[],
+ *   sheet_count: number, no_connect_count: number, error: string|null
+ * }} data
+ */
+function _onSchematicState(data) {
+  if (!data) return;
+  store.schematicState      = { ...data, loading: false };
+  store.schematicComponents = data.components || [];
+  store.schematicNetLabels  = data.net_labels  || [];
+  Logger.info('Bridge', `Schematic state: ${store.schematicComponents.length} components, ${store.schematicNetLabels.length} labels${data.error ? ' ERR=' + data.error : ''}`);
+}
+
 function _onBoardChanged() {
   // Board was modified in KiCad — request a fresh snapshot
   requestBoardState().catch(() => {});
@@ -438,6 +540,21 @@ function _onNetInfo(data) {
 }
 
 /**
+ * Request the live PCB stackup from the open KiCad board via pcbnew API.
+ * Result arrives asynchronously via `bridge:stackup_data` → `store.bridgeStackup`.
+ */
+export function requestBoardStackup() {
+  store.bridgeStackup = { loading: true };
+  return invoke(BRIDGE_REQUEST_STACKUP);
+}
+
+/** @param {{ board_name, layers, source, error? }} data */
+function _onStackupData(data) {
+  store.bridgeStackup = { ...data, loading: false };
+  Logger.info('Bridge', `Stackup received: ${data.layers?.length ?? 0} layers from ${data.source ?? 'unknown'}`);
+}
+
+/**
  * Forwarded write-op result from the bridge (move/rotate/lock/dnp/regenerate_zones).
  * Routes by `op` field — currently surfaces `regenerate_zones` into store.zoneFillResult.
  * Move/rotate/lock/dnp already drive their own dialogs, so they're emitted but not stored.
@@ -445,6 +562,7 @@ function _onNetInfo(data) {
  */
 function _onOpResult(payload) {
   if (!payload) return;
+  Logger.debug('Bridge', `op_result op=${payload.op} success=${payload.success}`, payload);
   if (payload.op === 'regenerate_zones') {
     store.zoneFillResult = { ...payload, loading: false };
   } else if (payload.op === 'purge_orphan_vias') {
@@ -480,7 +598,7 @@ function _setupDevModeListeners() {
       port: 40001,
       kicad_version: '10.0.1',
       board_name: 'mock_board.kicad_pcb',
-      plugin_version: '0.1.0',
+      plugin_version: '0.1.1',
     });
     _onBoardState({
       board_name:         'mock_board.kicad_pcb',
@@ -506,6 +624,29 @@ function _setupDevModeListeners() {
       ],
       board_size: { width_mm: 80, height_mm: 60, x_mm: 0, y_mm: 0 },
       design_rules: { min_clearance_mm: 0.15, min_track_width_mm: 0.127, min_via_drill_mm: 0.3 },
+    });
+    _onSchematicState({
+      sch_path:        'mock_board.kicad_sch',
+      sheet_count:     1,
+      no_connect_count: 3,
+      error:           null,
+      components: [
+        { ref: 'U1', value: 'STM32F405RGT6', footprint: 'Package_QFP:LQFP-64',          lib_id: 'MCU_ST_STM32F4:STM32F405RGTx', properties: { MPN: 'STM32F405RGT6', LCSC: 'C128592' } },
+        { ref: 'U2', value: 'TPS62130',       footprint: 'Package_TO_SOT_SMD:SOT-23-6',  lib_id: 'Regulator_Switching:TPS62130',  properties: { MPN: 'TPS62130ADBVR' } },
+        { ref: 'C1', value: '100nF',          footprint: 'Capacitor_SMD:C_0402',          lib_id: 'Device:C',                      properties: { LCSC: 'C25804' } },
+        { ref: 'C2', value: '10uF',           footprint: 'Capacitor_SMD:C_0805',          lib_id: 'Device:C',                      properties: {} },
+        { ref: 'R1', value: '10k',            footprint: 'Resistor_SMD:R_0402',           lib_id: 'Device:R',                      properties: { LCSC: 'C25804' } },
+      ],
+      net_labels: [
+        { type: 'global_label', name: 'GND',     position: { x: 100, y: 50,  angle: 0 } },
+        { type: 'global_label', name: 'VCC',     position: { x: 110, y: 50,  angle: 0 } },
+        { type: 'global_label', name: 'VCC_3V3', position: { x: 120, y: 50,  angle: 0 } },
+        { type: 'label',        name: 'SDA',     position: { x: 80,  y: 80,  angle: 0 } },
+        { type: 'label',        name: 'SCL',     position: { x: 90,  y: 80,  angle: 0 } },
+        { type: 'power',        name: 'GND',     position: { x: 50,  y: 100, angle: 0 } },
+        { type: 'power',        name: 'VCC',     position: { x: 60,  y: 100, angle: 0 } },
+      ],
+      symbols: [],
     });
   }, 1000);
 }
