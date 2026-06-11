@@ -120,6 +120,14 @@ export const store = createStore({
   bridgeBoardName: null,
 
   /**
+   * True while a board-state poll round-trip is in flight (sends → waits for
+   * snapshot). Drives the hero pulse bar into "sync" mode. Set by
+   * BridgeClient before each request, cleared on snapshot receipt.
+   * @type {boolean}
+   */
+  bridgeSyncing: false,
+
+  /**
    * Set when Rust detects the bridge reports a different board than the locked one.
    * UI should show a warning banner and block write operations.
    * @type {{ expected: string, actual: string, port: number }|null}

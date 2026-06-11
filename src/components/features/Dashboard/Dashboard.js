@@ -77,80 +77,131 @@ T.innerHTML = /* html */`
   .dash-scroll::-webkit-scrollbar { width: 4px; }
   .dash-scroll::-webkit-scrollbar-thumb { background: var(--km-alpha-08); border-radius: 2px; }
 
-  /* ── Hero bar ─────────────────────────────────────────────────── */
+  /* ── Hero bar — 64px tall, 4 zones ───────────────────────────── */
   .hero {
-    display: flex; align-items: center; gap: 16px;
-    padding: 12px 20px;
-    background: var(--km-alpha-02);
+    display: grid;
+    grid-template-columns: minmax(180px, auto) minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    height: 64px; flex-shrink: 0;
+    padding: 0 20px;
+    background: var(--km-alpha-018);
     border-bottom: 1px solid var(--km-alpha-05);
-    flex-shrink: 0;
     position: relative;
+    overflow: hidden;
   }
 
-  .hero-anim { width: 140px; height: 56px; flex-shrink: 0; }
-  .hero-anim svg { width:100%; height:100%; }
-  .trace-path { fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-  .trace-path.t1 { stroke:var(--km-accent);  stroke-dasharray:40 200; animation:comet 3s linear infinite; }
-  .trace-path.t2 { stroke:var(--km-live);    stroke-dasharray:30 200; animation:comet 3.5s linear infinite 0.6s; }
-  .trace-path.t3 { stroke:var(--km-trace);   stroke-dasharray:25 200; animation:comet 4s linear infinite 1.2s; }
-  .trace-glow    { fill:none; stroke-width:6; stroke-linecap:round; opacity:0.18; filter:blur(3px); }
-  .trace-glow.t1 { stroke:var(--km-accent);  stroke-dasharray:40 200; animation:comet 3s linear infinite; }
-  .trace-glow.t2 { stroke:var(--km-live);    stroke-dasharray:30 200; animation:comet 3.5s linear infinite 0.6s; }
-  .trace-glow.t3 { stroke:var(--km-trace);   stroke-dasharray:25 200; animation:comet 4s linear infinite 1.2s; }
-  .via-pad { fill:var(--km-bg-elevated); stroke:var(--km-accent); stroke-width:1.5; }
-  .via-dot { fill:var(--km-accent); }
-  @keyframes comet { 0%{stroke-dashoffset:240} 100%{stroke-dashoffset:0} }
+  /* Pulse progress bar pinned to the bottom of the hero (4px) */
+  .hero-pulse {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+    background: var(--km-alpha-05);
+    overflow: hidden;
+  }
+  .hero-pulse::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent 0%, var(--km-live) 50%, transparent 100%);
+    transform-origin: left;
+    transform: scaleX(0.2);
+    opacity: 0.55;
+  }
+  .hero-pulse.idle::after {
+    background: linear-gradient(90deg, transparent 0%, var(--km-alpha-30) 50%, transparent 100%);
+    animation: pulse-idle 2.5s ease-in-out infinite;
+  }
+  .hero-pulse.live::after {
+    animation: pulse-live 1.25s ease-in-out infinite;
+  }
+  .hero-pulse.sync::after {
+    animation: pulse-sync 0.625s ease-in-out infinite;
+  }
+  @keyframes pulse-idle  { 0%,100%{transform:scaleX(0.15);opacity:0.3} 50%{transform:scaleX(0.6);opacity:0.55} }
+  @keyframes pulse-live  { 0%,100%{transform:scaleX(0.25);opacity:0.45} 50%{transform:scaleX(0.85);opacity:0.85} }
+  @keyframes pulse-sync  { 0%,100%{transform:scaleX(0.4); opacity:0.7}  50%{transform:scaleX(1);   opacity:1} }
 
-  .hero-brand { display:flex; flex-direction:column; gap:2px; flex-shrink:0; }
-  .hero-title {
-    font-size: 18px; font-weight: 700; letter-spacing: -0.04em; line-height: 1;
-    background: linear-gradient(135deg, var(--km-accent-hover) 0%, var(--km-live) 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  /* Zone A — Identity */
+  .hero-id {
+    display: flex; align-items: center; gap: 12px; min-width: 0;
   }
-  .hero-version { font-size: 10px; color: var(--km-alpha-20); font-family: var(--km-font-mono); }
-
-  .hero-sys {
-    display: flex; flex-direction: column; justify-content: center; gap: 4px; flex-shrink: 0;
+  .hero-glyph {
+    width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--km-accent) 0%, var(--km-live) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 700; color: #fff;
+    box-shadow: var(--km-accent-glow);
+    letter-spacing: -0.05em;
   }
-  .hero-sys span {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-size: 11px; color: var(--km-alpha-30); white-space: nowrap;
+  .hero-id-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .hero-name {
+    font-size: 13px; font-weight: 600; letter-spacing: -0.02em;
+    color: var(--km-alpha-85);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-
-  .hero-divider { width:1px; height:28px; background:var(--km-alpha-07); flex-shrink:0; }
-
-  .hero-bridge {
-    display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
-  }
-  .bridge-dot {
-    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-    background: var(--km-alpha-15); transition: background 0.3s, box-shadow 0.3s;
-  }
-  .bridge-dot.on {
-    background: var(--km-live); box-shadow: 0 0 7px var(--km-live);
-    animation: bdot 3s ease-in-out infinite;
-  }
-  @keyframes bdot { 0%,100%{box-shadow:0 0 4px var(--km-live)} 50%{box-shadow:0 0 12px var(--km-live)} }
-  .bridge-status { font-size: 12px; font-weight: 500; flex-shrink: 0; }
-  .bridge-sub {
-    flex: 1; font-size: 10px; color: var(--km-alpha-25);
+  .hero-meta {
+    font-size: 10px; color: var(--km-alpha-30);
     font-family: var(--km-font-mono);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .bridge-acts { display:flex; gap:8px; flex-shrink:0; }
 
-  /* Hero right actions */
-  .hero-right {
-    display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto;
+  /* Zone B — Live status */
+  .hero-live {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+    padding: 0 12px; height: 36px;
+    background: var(--km-alpha-04);
+    border: 1px solid var(--km-alpha-06);
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    overflow: hidden;
+  }
+  .hero-live:hover { background: var(--km-alpha-06); border-color: var(--km-alpha-10); }
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--km-alpha-15);
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .live-dot.on  { background: var(--km-live); box-shadow: 0 0 8px var(--km-live); }
+  .live-dot.sync { background: var(--km-warning); box-shadow: 0 0 8px var(--km-warning); animation: live-blink 0.6s ease-in-out infinite; }
+  @keyframes live-blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .live-text {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 11px;
+  }
+  .live-text .lbl { color: var(--km-alpha-55); font-weight: 500; }
+  .live-text .val { color: var(--km-alpha-85); font-family: var(--km-font-mono); }
+
+  /* Zone C — Project breadcrumb */
+  .hero-proj {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+    padding: 0 12px; height: 36px;
+    background: var(--km-alpha-04);
+    border: 1px solid var(--km-alpha-06);
+    border-radius: 9px;
+    overflow: hidden;
+  }
+  .proj-icon { color: var(--km-alpha-30); flex-shrink: 0; display: flex; }
+  .proj-text { flex: 1; min-width: 0; overflow: hidden; }
+  .proj-name {
+    font-size: 12px; font-weight: 500; color: var(--km-alpha-85);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .proj-sub {
+    font-size: 10px; color: var(--km-alpha-25); font-family: var(--km-font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 1px;
+  }
+
+  /* Zone D — Actions */
+  .hero-acts {
+    display: flex; align-items: center; gap: 4px; flex-shrink: 0;
   }
   .icon-btn {
-    background: none; border: none; padding: 6px; border-radius: 8px;
-    color: var(--km-alpha-30); cursor: pointer;
+    background: none; border: none; padding: 7px; border-radius: 8px;
+    color: var(--km-alpha-40); cursor: pointer;
     display: inline-flex; align-items: center;
     transition: color 0.15s, background 0.15s;
   }
-  .icon-btn:hover { color: var(--km-alpha-70); background: var(--km-alpha-06); }
-  .icon-btn.active { color: var(--km-accent-hover); background: rgba(37,99,235,0.12); }
+  .icon-btn:hover { color: var(--km-alpha-85); background: var(--km-alpha-06); }
+  .icon-btn.active { color: var(--km-accent-hover); background: var(--km-accent-muted); }
 
   .btn {
     background: none; border: 1px solid var(--km-alpha-10);
@@ -361,101 +412,191 @@ T.innerHTML = /* html */`
     background: rgba(37,99,235,0.04);
   }
 
-  /* ── Widget picker overlay ────────────────────────────────────── */
-  .picker-backdrop {
-    position: fixed; inset: 0; z-index: 200;
-    background: var(--km-shadow-backdrop); backdrop-filter: blur(8px);
+  /* ── Floating action button (FAB) — permanent + to add widgets ── */
+  .fab {
+    position: fixed;
+    right: 28px; bottom: 28px;
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--km-accent);
+    color: #fff; border: none;
+    box-shadow:
+      0 8px 24px rgba(37,99,235,0.45),
+      0 0 0 4px rgba(37,99,235,0.12);
     display: flex; align-items: center; justify-content: center;
-    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+    cursor: pointer;
+    z-index: 150;
+    transition: transform 0.18s var(--km-ease-spring), background 0.15s, box-shadow 0.2s;
   }
-  .picker-backdrop.visible { opacity: 1; pointer-events: auto; }
+  .fab:hover {
+    background: var(--km-accent-hover);
+    transform: translateY(-2px) scale(1.05);
+    box-shadow:
+      0 12px 32px rgba(37,99,235,0.55),
+      0 0 0 6px rgba(37,99,235,0.15);
+  }
+  .fab:active { transform: scale(0.96); }
+  .fab[hidden] { display: none; }
 
-  .picker-panel {
+  /* ── Anchored popover (replaces the centred modal) ─────────── */
+  .popover-backdrop {
+    position: fixed; inset: 0; z-index: 200;
+    background: transparent;
+    pointer-events: none;
+  }
+  .popover-backdrop.visible { pointer-events: auto; }
+  .popover {
+    position: fixed;
+    right: 28px; bottom: 96px;
+    width: 360px; max-height: 480px;
     background: var(--km-glass-bg);
     border: 1px solid var(--km-alpha-10);
     border-top-color: var(--km-alpha-18);
-    border-radius: 24px;
-    box-shadow: 0 40px 80px var(--km-shadow-card-strong), 0 0 0 0.5px var(--km-shadow-card-strong);
-    width: 400px; overflow: hidden;
-    transform: scale(0.94) translateY(12px);
-    transition: transform 0.25s var(--km-ease-spring);
+    border-radius: 16px;
+    box-shadow:
+      0 24px 60px var(--km-shadow-card-strong),
+      0 0 0 0.5px var(--km-shadow-card-strong);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    transform: translateY(8px) scale(0.96);
+    opacity: 0; pointer-events: none;
+    transform-origin: bottom right;
+    transition: transform 0.18s var(--km-ease-spring), opacity 0.15s;
   }
-  .picker-backdrop.visible .picker-panel {
-    transform: scale(1) translateY(0);
+  .popover-backdrop.visible .popover {
+    transform: translateY(0) scale(1);
+    opacity: 1; pointer-events: auto;
   }
-  .picker-hdr {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 20px 12px;
+  .popover-hdr {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--km-alpha-06);
+    flex-shrink: 0;
   }
-  .picker-title {
-    font-size: 14px; font-weight: 600; color: var(--km-alpha-85);
-  }
-  .picker-close {
-    background: none; border: none; padding: 4px; border-radius: 6px;
-    color: var(--km-alpha-30); cursor: pointer;
-    display: flex; align-items: center; transition: color 0.1s;
-  }
-  .picker-close:hover { color: var(--km-alpha-70); }
-  .picker-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: 8px; padding: 14px;
-  }
-  .picker-item {
-    display: flex; flex-direction: column; align-items: center; gap: 8px;
-    padding: 16px 10px; border-radius: 14px; cursor: pointer;
+  .popover-search-wrap {
+    flex: 1; display: flex; align-items: center; gap: 8px;
+    background: var(--km-alpha-04);
     border: 1px solid var(--km-alpha-06);
-    transition: all 0.15s;
+    border-radius: 8px;
+    padding: 0 10px; height: 32px;
   }
-  .picker-item:hover {
-    background: rgba(37,99,235,0.08);
-    border-color: rgba(37,99,235,0.3);
+  .popover-search-wrap:focus-within {
+    border-color: var(--km-accent-border);
+    background: var(--km-alpha-06);
   }
-  .picker-item km-icon { color: var(--km-alpha-45); }
-  .picker-item:hover km-icon { color: var(--km-accent-hover); }
-  .picker-item-label {
-    font-size: 11px; color: var(--km-alpha-40); text-align: center; line-height: 1.3;
+  .popover-search {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--km-alpha-85); font: inherit; font-size: 12px;
+    font-family: var(--km-font);
   }
-  .picker-item:hover .picker-item-label { color: var(--km-alpha-70); }
-  .picker-empty {
-    padding: 28px; text-align: center;
-    font-size: 12px; color: var(--km-alpha-20);
+  .popover-search::placeholder { color: var(--km-alpha-30); }
+  .popover-grid {
+    flex: 1; overflow-y: auto; padding: 10px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
   }
+  .popover-item {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px 8px; border-radius: 10px; cursor: pointer;
+    border: 1px solid transparent;
+    background: none;
+    transition: all 0.12s;
+    font: inherit; color: inherit;
+  }
+  .popover-item:hover {
+    background: var(--km-accent-muted);
+    border-color: var(--km-accent-border);
+  }
+  .popover-item km-icon { color: var(--km-alpha-55); }
+  .popover-item:hover km-icon { color: var(--km-accent-hover); }
+  .popover-item-label {
+    font-size: 10px; color: var(--km-alpha-45);
+    text-align: center; line-height: 1.3;
+  }
+  .popover-item:hover .popover-item-label { color: var(--km-alpha-85); }
+  .popover-item.added { opacity: 0.35; cursor: default; }
+  .popover-item.added:hover { background: none; border-color: transparent; }
+  .popover-item.added km-icon,
+  .popover-item.added .popover-item-label { color: var(--km-alpha-25); }
+  .popover-empty {
+    grid-column: 1 / -1;
+    padding: 28px 14px; text-align: center;
+    font-size: 11px; color: var(--km-alpha-25);
+  }
+  .popover-empty b { color: var(--km-alpha-55); font-weight: 500; }
+
+  /* ── Right-click context menu ──────────────────────────────── */
+  .ctx-menu {
+    position: fixed; z-index: 300;
+    min-width: 180px;
+    background: var(--km-glass-bg);
+    border: 1px solid var(--km-alpha-10);
+    border-top-color: var(--km-alpha-18);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px var(--km-shadow-card-strong);
+    padding: 4px;
+    display: none;
+  }
+  .ctx-menu.visible { display: block; }
+  .ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; padding: 6px 10px;
+    background: none; border: none;
+    color: var(--km-alpha-70);
+    font: inherit; font-size: 12px; text-align: left;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+  .ctx-item:hover { background: var(--km-accent-muted); color: var(--km-alpha-85); }
+  .ctx-item.danger { color: var(--km-danger); }
+  .ctx-item.danger:hover { background: rgba(239,68,68,0.12); }
+  .ctx-sep { height: 1px; background: var(--km-alpha-06); margin: 4px 6px; }
+  .ctx-kbd { margin-left: auto; font-size: 10px; color: var(--km-alpha-25); font-family: var(--km-font-mono); }
 </style>
 
-<!-- Hero bar -->
+<!-- Hero bar — 64px, 4 zones -->
 <div class="hero" id="hero">
-  <div class="hero-anim">
-    <svg viewBox="0 0 160 72" xmlns="http://www.w3.org/2000/svg">
-      <path class="trace-glow t1" d="M8 36 H42 L54 16 H106 L118 36 H152"/>
-      <path class="trace-path t1" d="M8 36 H42 L54 16 H106 L118 36 H152"/>
-      <path class="trace-glow t2" d="M8 50 H34 L46 62 H80 L92 42 H124 L136 56 H152"/>
-      <path class="trace-path t2" d="M8 50 H34 L46 62 H80 L92 42 H124 L136 56 H152"/>
-      <path class="trace-glow t3" d="M8 22 H26 L38 10 H66 L78 36 H98 L110 22 H152"/>
-      <path class="trace-path t3" d="M8 22 H26 L38 10 H66 L78 36 H98 L110 22 H152"/>
-      <circle class="via-pad" cx="42" cy="36" r="4.5"/><circle class="via-dot" cx="42" cy="36" r="1.8"/>
-      <circle class="via-pad" cx="106" cy="16" r="3.5"/><circle class="via-dot" cx="106" cy="16" r="1.4"/>
-      <circle class="via-pad" cx="80"  cy="36" r="4.5"/><circle class="via-dot" cx="80"  cy="36" r="1.8"/>
-      <circle class="via-pad" cx="124" cy="42" r="3.5"/><circle class="via-dot" cx="124" cy="42" r="1.4"/>
-    </svg>
+  <!-- Zone A — Identity -->
+  <div class="hero-id" id="hero-id">
+    <div class="hero-glyph">K</div>
+    <div class="hero-id-text">
+      <div class="hero-name">KiMaster</div>
+      <div class="hero-meta" id="hero-meta">v0.1.0</div>
+    </div>
   </div>
-  <div class="hero-brand">
-    <div class="hero-title">KiMaster</div>
-    <div class="hero-version" id="hero-ver">v0.1.0</div>
+
+  <!-- Zone B — Live status -->
+  <button class="hero-live" id="hero-live" type="button" title="Open Bridge monitor">
+    <div class="live-dot" id="live-dot"></div>
+    <div class="live-text">
+      <span class="lbl"  id="live-lbl">Not connected</span>
+      <span class="val"  id="live-val"></span>
+    </div>
+  </button>
+
+  <!-- Zone C — Project breadcrumb -->
+  <div class="hero-proj" id="hero-proj" title="Open project folder">
+    <div class="proj-icon"><km-icon name="folder" size="sm"></km-icon></div>
+    <div class="proj-text">
+      <div class="proj-name" id="proj-name">No project open</div>
+      <div class="proj-sub"  id="proj-sub">Open a .kicad_pro to start</div>
+    </div>
   </div>
-  <div class="hero-sys" id="hero-sys"></div>
-  <div class="hero-divider"></div>
-  <div class="hero-bridge" id="hero-bridge">
-    <div class="bridge-dot" id="bdot"></div>
-    <span class="bridge-status" id="bstat">Not connected</span>
-    <span class="bridge-sub"   id="bsub"></span>
-    <div class="bridge-acts"   id="bacts"></div>
-  </div>
-  <div class="hero-right">
+
+  <!-- Zone D — Actions -->
+  <div class="hero-acts">
+    <button class="icon-btn" id="btn-palette" title="Command palette (Ctrl+K)">
+      <km-icon name="search" size="sm"></km-icon>
+    </button>
     <button class="icon-btn" id="btn-edit" title="Edit layout">
       <km-icon name="settings" size="sm"></km-icon>
     </button>
+    <button class="icon-btn" id="btn-bridge" title="Open bridge">
+      <km-icon name="plug" size="sm"></km-icon>
+    </button>
   </div>
+
+  <!-- Pulse progress bar (pinned to bottom of hero) -->
+  <div class="hero-pulse idle" id="hero-pulse"></div>
 </div>
 
 <!-- Edit mode banner -->
@@ -473,18 +614,32 @@ T.innerHTML = /* html */`
   </div>
 </div>
 
-<!-- Widget picker backdrop -->
-<div class="picker-backdrop" id="picker-backdrop">
-  <div class="picker-panel" id="picker-panel">
-    <div class="picker-hdr">
-      <span class="picker-title">Add widget</span>
-      <button class="picker-close" id="picker-close">
-        <km-icon name="x" size="sm"></km-icon>
-      </button>
+<!-- Permanent FAB — opens the widget popover -->
+<button class="fab" id="fab-add" type="button" title="Add widget" aria-label="Add widget">
+  <km-icon name="plus" size="md"></km-icon>
+</button>
+
+<!-- Anchored popover (replaces the centred modal) -->
+<div class="popover-backdrop" id="popover-backdrop">
+  <div class="popover" id="popover" role="dialog" aria-label="Add widget">
+    <div class="popover-hdr">
+      <div class="popover-search-wrap">
+        <km-icon name="search" size="sm"></km-icon>
+        <input
+          class="popover-search"
+          id="popover-search"
+          type="text"
+          placeholder="Search widgets…"
+          autocomplete="off"
+          spellcheck="false">
+      </div>
     </div>
-    <div class="picker-grid" id="picker-grid"></div>
+    <div class="popover-grid" id="popover-grid"></div>
   </div>
 </div>
+
+<!-- Right-click context menu (single instance, positioned dynamically) -->
+<div class="ctx-menu" id="ctx-menu" role="menu"></div>
 `;
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -514,13 +669,15 @@ export class KmDashboard extends HTMLElement {
 
   connectedCallback() {
     this._renderHero();
-    this._renderBridge();
+    this._renderLive();
     this._renderGrid();
     this._wireControls();
 
     this._unsubs.push(
-      subscribe('bridgeConnected',    () => this._renderBridge()),
-      subscribe('bridgeBoardName',    () => this._renderBridge()),
+      subscribe('bridgeConnected',    () => this._renderLive()),
+      subscribe('bridgeBoardName',    () => this._renderLive()),
+      subscribe('bridgePort',         () => this._renderLive()),
+      subscribe('bridgeSyncing',      () => this._renderLive()),
       subscribe('bridgeKicadVersion', () => this._renderHero()),
       subscribe('project',            () => this._renderHero()),
     );
@@ -529,6 +686,11 @@ export class KmDashboard extends HTMLElement {
   disconnectedCallback() {
     this._unsubs.forEach(u => u());
     this._unsubs = [];
+    if (this._onDocKey) {
+      document.removeEventListener('keydown', this._onDocKey);
+      this._onDocKey = null;
+    }
+    this._closeContextMenu();
   }
 
   // ── Layout persistence (delegates to LayoutStore) ─────────────
@@ -566,55 +728,73 @@ export class KmDashboard extends HTMLElement {
   // ── Hero ──────────────────────────────────────────────────────
 
   _renderHero() {
-    const ver = this.shadowRoot.getElementById('hero-ver');
-    const sys = this.shadowRoot.getElementById('hero-sys');
-    ver.textContent = `v${store.appVersion || '0.1.0'}`;
-
-    const parts = [];
-    if (store.bridgeKicadVersion)
-      parts.push(`<span><km-icon name="cpu" size="sm"></km-icon> KiCad ${_e(store.bridgeKicadVersion)}</span>`);
-    if (store.kicadCliPath)
-      parts.push(`<span><km-icon name="check" size="sm" style="color:var(--km-trace)"></km-icon> kicad-cli</span>`);
-    else
-      parts.push(`<span><km-icon name="warning" size="sm" style="color:var(--km-warning)"></km-icon> kicad-cli missing</span>`);
-    sys.innerHTML = parts.join('');
-  }
-
-  // ── Bridge ────────────────────────────────────────────────────
-
-  _renderBridge() {
-    const on   = store.bridgeConnected;
-    const dot  = this.shadowRoot.getElementById('bdot');
-    const stat = this.shadowRoot.getElementById('bstat');
-    const sub  = this.shadowRoot.getElementById('bsub');
-    const acts = this.shadowRoot.getElementById('bacts');
-
-    dot.classList.toggle('on', on);
-
-    if (on) {
-      stat.textContent = 'Connected to KiCad';
-      sub.textContent  = store.bridgeBoardName
-        ? `Live sync · ${store.bridgeBoardName.split(/[\\/]/).pop()}`
-        : 'Live sync';
-    } else {
-      stat.textContent = 'Not connected';
-      sub.textContent  = '';
+    // Meta line under the app name: "v0.x · KiCad 9.0" (or "kicad-cli missing")
+    const meta = this.shadowRoot.getElementById('hero-meta');
+    if (meta) {
+      const segs = [`v${store.appVersion || '0.1.0'}`];
+      if (store.bridgeKicadVersion) segs.push(`KiCad ${store.bridgeKicadVersion}`);
+      else if (store.kicadCliPath)   segs.push('kicad-cli ✓');
+      else                            segs.push('kicad-cli ✗');
+      meta.textContent = segs.join(' · ');
     }
 
-    if (on) {
-      acts.innerHTML = `
-        <button class="btn" id="btn-refresh"><km-icon name="refresh" size="sm"></km-icon></button>
-        <button class="btn danger" id="btn-dc">Disconnect</button>`;
-      acts.querySelector('#btn-refresh')?.addEventListener('click', () =>
-        import('../../../modules/kicad-bridge/BridgeClient.js').then(m => m.requestBoardState()));
-      acts.querySelector('#btn-dc')?.addEventListener('click', () =>
-        import('../../../modules/kicad-bridge/BridgeClient.js').then(m => m.disconnectBridge()));
-    } else {
-      acts.innerHTML = `<button class="btn primary" id="btn-con">Connect</button>`;
-      acts.querySelector('#btn-con')?.addEventListener('click', () =>
-        import('../../../modules/kicad-bridge/BridgeClient.js')
-          .then(m => m.showConnectGate())
-          .catch(err => notify({ type: 'error', title: 'Connection failed', message: String(err?.message ?? err) })));
+    // Project breadcrumb (Zone C)
+    const projName = this.shadowRoot.getElementById('proj-name');
+    const projSub  = this.shadowRoot.getElementById('proj-sub');
+    if (projName && projSub) {
+      if (store.project?.name) {
+        projName.textContent = store.project.name;
+        const full = store.project.path || '';
+        const dir  = full.includes('\\') || full.includes('/')
+          ? full.split(/[\\/]/).slice(0, -1).pop() || ''
+          : '';
+        const saved = store.project.savedAt
+          ? ' · saved ' + _relTime(store.project.savedAt)
+          : store.project.mtimeMs
+            ? ' · saved ' + _relTime(store.project.mtimeMs)
+            : '';
+        projSub.textContent  = (dir ? dir + ' · ' : '') + 'kicad_pro' + saved;
+      } else {
+        projName.textContent = 'No project open';
+        projSub.textContent  = 'Open a .kicad_pro to start';
+      }
+    }
+  }
+
+  // ── Live status pill (Zone B) ─────────────────────────────────
+
+  _renderLive() {
+    const on   = !!store.bridgeConnected;
+    const sync = !!store.bridgeSyncing;
+    const dot  = this.shadowRoot.getElementById('live-dot');
+    const lbl  = this.shadowRoot.getElementById('live-lbl');
+    const val  = this.shadowRoot.getElementById('live-val');
+    const pulse = this.shadowRoot.getElementById('hero-pulse');
+    const btn  = this.shadowRoot.getElementById('btn-bridge');
+
+    if (dot) {
+      dot.classList.toggle('on',   on && !sync);
+      dot.classList.toggle('sync', sync);
+    }
+    if (lbl) lbl.textContent = sync ? 'Syncing…' : on ? 'Connected · KiCad' : 'Not connected';
+    if (val) {
+      if (on) {
+        const board = store.bridgeBoardName
+          ? store.bridgeBoardName.split(/[\\/]/).pop()
+          : '';
+        const port  = store.bridgePort ? `:${store.bridgePort}` : '';
+        val.textContent = board ? `${board} ${port}`.trim() : `localhost${port}`;
+      } else {
+        val.textContent = '';
+      }
+    }
+    if (pulse) {
+      pulse.classList.toggle('idle', !on);
+      pulse.classList.toggle('live',  on && !sync);
+      pulse.classList.toggle('sync',  sync);
+    }
+    if (btn) {
+      btn.title = on ? 'Disconnect bridge' : 'Open bridge';
     }
   }
 
@@ -704,15 +884,18 @@ export class KmDashboard extends HTMLElement {
         this._startMove(e, cell, entry);
       });
 
+      // Right-click context menu (always available, not just in edit mode)
+      cell.addEventListener('contextmenu', e => this._openContextMenu(e, entry));
+
       grid.appendChild(cell);
     });
 
-    // Add cell (shown in edit mode)
+    // Add cell (shown in edit mode) — reuses the same popover the FAB opens
     const addCell = document.createElement('div');
     addCell.className = 'add-cell';
     addCell.textContent = '＋';
     addCell.title = 'Add widget';
-    addCell.addEventListener('click', () => this._openPicker());
+    addCell.addEventListener('click', () => this._openPopover());
     grid.appendChild(addCell);
   }
 
@@ -891,38 +1074,163 @@ export class KmDashboard extends HTMLElement {
     document.addEventListener('mouseup',   onUp);
   }
 
-  // ── Widget picker ─────────────────────────────────────────────
+  // ── Widget popover (anchored to FAB / +cell) ─────────────────
 
-  _openPicker() {
-    const backdrop = this.shadowRoot.getElementById('picker-backdrop');
-    const grid     = this.shadowRoot.getElementById('picker-grid');
-    const active   = new Set(getLayout().map(e => e.id));
-    const avail    = Object.entries(WIDGETS).filter(([id]) => !active.has(id));
-
-    if (!avail.length) {
-      grid.innerHTML = `<div class="picker-empty">All widgets are already on your dashboard.</div>`;
-    } else {
-      grid.innerHTML = avail.map(([id, def]) => `
-        <div class="picker-item" data-wid="${id}">
-          <km-icon name="${def.icon}" size="lg"></km-icon>
-          <span class="picker-item-label">${def.label}</span>
-        </div>`).join('');
-      grid.querySelectorAll('.picker-item').forEach(item =>
-        item.addEventListener('click', () => {
-          const id  = item.dataset.wid;
-          const def = WIDGETS[id];
-          this._layout.push({ id, w: def.defaultW, h: def.defaultH, colSpan: toLegacyColSpan(def.defaultW), rowSpan: toLegacyRowSpan(def.defaultH) });
-          this._saveLayout();
-          this._renderGrid();
-          this._closePicker();
-        }));
-    }
-
-    backdrop.classList.add('visible');
+  _togglePopover() {
+    const bd = this.shadowRoot.getElementById('popover-backdrop');
+    if (bd.classList.contains('visible')) this._closePopover();
+    else this._openPopover();
   }
 
-  _closePicker() {
-    this.shadowRoot.getElementById('picker-backdrop').classList.remove('visible');
+  _openPopover() {
+    this.shadowRoot.getElementById('popover-backdrop').classList.add('visible');
+    this.shadowRoot.getElementById('popover-search').value = '';
+    this._renderPopoverItems('');
+    // Focus the search box after the open transition
+    setTimeout(() => this.shadowRoot.getElementById('popover-search')?.focus(), 50);
+  }
+
+  _closePopover() {
+    this.shadowRoot.getElementById('popover-backdrop')?.classList.remove('visible');
+  }
+
+  _renderPopoverItems(query = '') {
+    const grid   = this.shadowRoot.getElementById('popover-grid');
+    const active = new Set(getLayout().map(e => e.id));
+    const q      = query.trim().toLowerCase();
+    const all    = Object.entries(WIDGETS);
+    const matches = q
+      ? all.filter(([id, def]) => def.label.toLowerCase().includes(q) || id.includes(q))
+      : all;
+
+    if (!matches.length) {
+      grid.innerHTML = `<div class="popover-empty">No widgets match "<b>${_e(query)}</b>"</div>`;
+      return;
+    }
+    const allAdded = matches.every(([id]) => active.has(id));
+    if (allAdded && !q) {
+      grid.innerHTML = `<div class="popover-empty">All <b>${matches.length}</b> widgets are already on your dashboard. Remove one first, or reset the layout from the command palette.</div>`;
+      return;
+    }
+    grid.innerHTML = matches.map(([id, def]) => {
+      const added = active.has(id);
+      return `
+        <button class="popover-item ${added ? 'added' : ''}" data-wid="${id}" ${added ? 'disabled' : ''} type="button">
+          <km-icon name="${def.icon}" size="md"></km-icon>
+          <span class="popover-item-label">${_e(def.label)}</span>
+        </button>`;
+    }).join('');
+    grid.querySelectorAll('.popover-item:not(.added)').forEach(btn =>
+      btn.addEventListener('click', () => this._addWidgetFromPopover(btn.dataset.wid)));
+  }
+
+  _addWidgetFromPopover(id) {
+    const def  = WIDGETS[id];
+    if (!def) return;
+    const cur  = getLayout();
+    cur.push({ id, w: def.defaultW, h: def.defaultH });
+    setLayout(cur);
+    this._renderGrid();
+    // Re-render the popover items so the now-added widget shows as disabled
+    this._renderPopoverItems(this.shadowRoot.getElementById('popover-search')?.value || '');
+  }
+
+  // ── Right-click context menu on widgets ──────────────────────
+
+  _openContextMenu(e, entry) {
+    e.preventDefault();
+    e.stopPropagation();
+    const menu = this.shadowRoot.getElementById('ctx-menu');
+    const def  = WIDGETS[entry.id];
+    if (!def || !menu) return;
+
+    menu.innerHTML = `
+      <button class="ctx-item" data-act="grow-w">
+        <km-icon name="plus" size="sm"></km-icon> Grow width <span class="ctx-kbd">→</span>
+      </button>
+      <button class="ctx-item" data-act="shrink-w">
+        <km-icon name="x" size="sm"></km-icon> Shrink width <span class="ctx-kbd">←</span>
+      </button>
+      <button class="ctx-item" data-act="grow-h">
+        <km-icon name="plus" size="sm"></km-icon> Grow height <span class="ctx-kbd">↓</span>
+      </button>
+      <button class="ctx-item" data-act="shrink-h">
+        <km-icon name="x" size="sm"></km-icon> Shrink height <span class="ctx-kbd">↑</span>
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item" data-act="reset">
+        <km-icon name="refresh" size="sm"></km-icon> Reset to default size
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item danger" data-act="remove">
+        <km-icon name="x" size="sm"></km-icon> Remove widget
+      </button>
+    `;
+    // Position with edge clamping
+    const PAD = 8;
+    menu.style.left = '0px';
+    menu.style.top  = '0px';
+    menu.classList.add('visible');
+    const r = menu.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let x = e.clientX, y = e.clientY;
+    if (x + r.width  > vw - PAD) x = vw - r.width  - PAD;
+    if (y + r.height > vh - PAD) y = vh - r.height - PAD;
+    menu.style.left = x + 'px';
+    menu.style.top  = y + 'px';
+
+    const onPick = (ev) => {
+      const btn = ev.target.closest('.ctx-item');
+      if (!btn) return;
+      this._closeContextMenu();
+      this._applyContextAction(btn.dataset.act, entry);
+    };
+    menu.addEventListener('click', onPick, { once: true });
+
+    // Dismiss on outside click or Escape
+    setTimeout(() => {
+      this._ctxDismiss = (ev) => {
+        if (!menu.contains(ev.target)) this._closeContextMenu();
+      };
+      document.addEventListener('mousedown', this._ctxDismiss);
+      this._ctxKey = (ev) => { if (ev.key === 'Escape') this._closeContextMenu(); };
+      document.addEventListener('keydown', this._ctxKey);
+    }, 0);
+  }
+
+  _closeContextMenu() {
+    this.shadowRoot.getElementById('ctx-menu')?.classList.remove('visible');
+    if (this._ctxDismiss) { document.removeEventListener('mousedown', this._ctxDismiss); this._ctxDismiss = null; }
+    if (this._ctxKey)     { document.removeEventListener('keydown',  this._ctxKey);     this._ctxKey     = null; }
+  }
+
+  _applyContextAction(act, entry) {
+    const cur = getLayout();
+    const i   = cur.findIndex(x => x.id === entry.id);
+    if (i === -1) return;
+    const e = cur[i];
+    const wMax = 12, hMax = 8;
+    const inc = (step) => {
+      if (act === 'grow-w')    e.w = Math.min(wMax, e.w + 3);
+      if (act === 'shrink-w')  e.w = Math.max(3,  e.w - 3);
+      if (act === 'grow-h')    e.h = Math.min(hMax, e.h + 1);
+      if (act === 'shrink-h')  e.h = Math.max(1,  e.h - 1);
+    };
+    if (act === 'reset') {
+      const def = WIDGETS[entry.id];
+      e.w = def.defaultW; e.h = def.defaultH;
+    } else if (act === 'remove') {
+      cur.splice(i, 1);
+    } else {
+      inc(act);
+    }
+    setLayout(cur);
+    this._renderGrid();
+    notify({
+      type: 'success',
+      title: act === 'remove' ? 'Widget removed' : act === 'reset' ? 'Size reset' : 'Widget resized',
+      message: WIDGETS[entry.id].label,
+    });
   }
 
   // ── Controls wiring ───────────────────────────────────────────
@@ -939,13 +1247,47 @@ export class KmDashboard extends HTMLElement {
         this._renderGrid();
         this._setEditMode(false);
       });
-    this.shadowRoot.getElementById('picker-close')
-      ?.addEventListener('click', () => this._closePicker());
-    this.shadowRoot.getElementById('picker-backdrop')
-      ?.addEventListener('click', e => {
-        if (e.target === this.shadowRoot.getElementById('picker-backdrop'))
-          this._closePicker();
+    this.shadowRoot.getElementById('btn-palette')
+      ?.addEventListener('click', () => import('../../../core/Router.js').then(m => {
+        // Open the omni-bar by clicking it if it exists, else navigate home
+        const pal = document.querySelector('km-command-palette');
+        if (pal && typeof pal.open === 'function') pal.open();
+        else m.Router.navigate('/');
+      }));
+    this.shadowRoot.getElementById('hero-live')
+      ?.addEventListener('click', () => import('../../../core/Router.js').then(m => m.Router.navigate('/bridge')));
+    this.shadowRoot.getElementById('hero-proj')
+      ?.addEventListener('click', () => {
+        if (store.project?.path) {
+          import('../../../core/Ipc.js').then(({ invoke }) => invoke('open_path', { path: store.project.path }));
+        } else {
+          import('../../../modules/project/ProjectService.js').then(m => m.pickAndOpenProject());
+        }
       });
+    this.shadowRoot.getElementById('btn-bridge')
+      ?.addEventListener('click', () => {
+        if (store.bridgeConnected) {
+          import('../../../modules/kicad-bridge/BridgeClient.js').then(m => m.disconnectBridge());
+        } else {
+          import('../../../modules/kicad-bridge/BridgeClient.js').then(m => m.showConnectGate());
+        }
+      });
+
+    // FAB — always visible, opens anchored popover
+    this.shadowRoot.getElementById('fab-add')
+      ?.addEventListener('click', () => this._togglePopover());
+    this.shadowRoot.getElementById('popover-search')
+      ?.addEventListener('input', e => this._renderPopoverItems(e.target.value));
+    this.shadowRoot.getElementById('popover-backdrop')
+      ?.addEventListener('click', e => {
+        if (e.target === this.shadowRoot.getElementById('popover-backdrop'))
+          this._closePopover();
+      });
+    document.addEventListener('keydown', this._onDocKey = e => {
+      if (e.key === 'Escape' && this.shadowRoot.getElementById('popover-backdrop')?.classList.contains('visible')) {
+        this._closePopover();
+      }
+    });
   }
 }
 
@@ -953,6 +1295,17 @@ function _e(s) {
   const d = document.createElement('div');
   d.textContent = String(s ?? '');
   return d.innerHTML;
+}
+
+/** Human-friendly "x ago" relative timestamp. Pure local math, no i18n. */
+function _relTime(t) {
+  const ms = Date.now() - Number(t);
+  if (!Number.isFinite(ms) || ms < 0)        return 'just now';
+  if (ms < 60_000)                          return 'just now';
+  if (ms < 3_600_000)                       return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000)                      return `${Math.floor(ms / 3_600_000)}h ago`;
+  if (ms < 7 * 86_400_000)                  return `${Math.floor(ms / 86_400_000)}d ago`;
+  return new Date(Number(t)).toLocaleDateString();
 }
 
 customElements.define('km-dashboard', KmDashboard);

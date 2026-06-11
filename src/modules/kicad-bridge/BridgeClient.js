@@ -252,7 +252,12 @@ export async function disconnectBridge() {
 
 /** Request a fresh board state snapshot from KiCad. */
 export function requestBoardState() {
-  return invoke(BRIDGE_REQUEST_BOARD_STATE);
+  // Flip the hero pulse into "sync" mode for the duration of the round-trip.
+  // The snapshot arrives via bridge:board_state event, which we hook to clear.
+  store.bridgeSyncing = true;
+  return invoke(BRIDGE_REQUEST_BOARD_STATE).finally(() => {
+    store.bridgeSyncing = false;
+  });
 }
 
 /**
