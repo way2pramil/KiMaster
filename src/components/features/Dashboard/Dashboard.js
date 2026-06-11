@@ -13,6 +13,18 @@ import { Logger }           from '../../../core/Logger.js';
 import { notify }           from '../../../core/Notify.js';
 import { store, subscribe } from '../../../core/State.js';
 import { KM_NAV }           from '../../../core/AppEvents.js';
+import {
+  initLayoutStore,
+  getLayout,
+  setLayout,
+  moveWidget as moveWidgetInStore,
+  resizeWidget as resizeWidgetInStore,
+  hideWidget as hideWidgetInStore,
+  showWidget as showWidgetInStore,
+  resetLayout as resetLayoutInStore,
+  toLegacyColSpan,
+  toLegacyRowSpan,
+} from './layout/LayoutStore.js';
 
 // ── Widget imports (register all custom elements) ─────────────────────────────
 import './widgets/WidgetProjectFiles.js';
@@ -26,24 +38,22 @@ import './widgets/WidgetShortcuts.js';
 // ── Widget registry ───────────────────────────────────────────────────────────
 
 const WIDGETS = {
-  'project-files':   { label:'Project files',   icon:'folder-tree', tag:'km-wgt-project-files',   colSpan:2, rowSpan:2 },
-  'recent-projects': { label:'Recent projects', icon:'clock',       tag:'km-wgt-recent-projects',  colSpan:2, rowSpan:2 },
-  'board-info':      { label:'Board info',       icon:'cpu',         tag:'km-wgt-board-info',       colSpan:2, rowSpan:2 },
-  'netlist-graph':   { label:'Netlist graph',   icon:'graph',        tag:'km-wgt-netlist-graph',    colSpan:2, rowSpan:2 },
-  'shortcuts':       { label:'Shortcuts',        icon:'grid',         tag:'km-wgt-shortcuts',        colSpan:4, rowSpan:1 },
-  'notes':           { label:'Notes',            icon:'notes',        tag:'km-wgt-notes',            colSpan:2, rowSpan:1 },
-  'board-render':    { label:'3D render',        icon:'render',       tag:'km-wgt-board-render',     colSpan:2, rowSpan:2 },
+  'project-files':   { label:'Project files',   icon:'folder-tree', tag:'km-wgt-project-files',    defaultW: 3, defaultH: 2 },
+  'recent-projects': { label:'Recent projects', icon:'clock',       tag:'km-wgt-recent-projects',  defaultW: 3, defaultH: 2 },
+  'board-info':      { label:'Board info',      icon:'cpu',         tag:'km-wgt-board-info',       defaultW: 3, defaultH: 2 },
+  'netlist-graph':   { label:'Netlist graph',   icon:'graph',       tag:'km-wgt-netlist-graph',    defaultW: 3, defaultH: 2 },
+  'shortcuts':       { label:'Shortcuts',       icon:'grid',        tag:'km-wgt-shortcuts',        defaultW: 6, defaultH: 1 },
+  'notes':           { label:'Notes',           icon:'notes',       tag:'km-wgt-notes',            defaultW: 3, defaultH: 1 },
+  'board-render':    { label:'3D render',       icon:'render',      tag:'km-wgt-board-render',     defaultW: 3, defaultH: 2 },
 };
 
 const DEFAULT_LAYOUT = [
-  { id:'project-files',  colSpan:1, rowSpan:1 },
-  { id:'netlist-graph',  colSpan:3, rowSpan:1 },
-  { id:'board-info',     colSpan:2, rowSpan:1 },
-  { id:'shortcuts',      colSpan:1, rowSpan:1 },
-  { id:'notes',          colSpan:1, rowSpan:1 },
+  { id: 'project-files', w: 3, h: 1 },
+  { id: 'netlist-graph', w: 9, h: 1 },
+  { id: 'board-info',    w: 6, h: 1 },
+  { id: 'shortcuts',     w: 3, h: 1 },
+  { id: 'notes',         w: 3, h: 1 },
 ];
-
-const LS_LAYOUT = 'km-dash-layout-v2';
 
 // ── Template ──────────────────────────────────────────────────────────────────
 
@@ -485,9 +495,21 @@ export class KmDashboard extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.appendChild(T.content.cloneNode(true));
     this._unsubs   = [];
-    this._layout   = this._loadLayout();
     this._editMode = false;
     this._dragId   = null;
+
+    // One-time init: hand the LayoutStore the list of known widget ids
+    // and copy the persisted (or migrated) layout into the global store.
+    // Safe to call multiple times — second call is a no-op for layout, but
+    // refreshes _knownIds in case widgets were registered later.
+    if (!KmDashboard._storeInit) {
+      initLayoutStore(Object.keys(WIDGETS));
+      // If nothing was loaded from localStorage, seed with default.
+      if (!store.dashboardLayout || store.dashboardLayout.length === 0) {
+        setLayout(DEFAULT_LAYOUT);
+      }
+      KmDashboard._storeInit = true;
+    }
   }
 
   connectedCallback() {
@@ -509,23 +531,36 @@ export class KmDashboard extends HTMLElement {
     this._unsubs = [];
   }
 
-  // ── Layout persistence ────────────────────────────────────────
+  // ── Layout persistence (delegates to LayoutStore) ─────────────
 
-  _loadLayout() {
-    try {
-      const s = localStorage.getItem(LS_LAYOUT);
-      if (s) {
-        const arr = JSON.parse(s);
-        // Validate: each entry must have a known id
-        const valid = arr.filter(e => WIDGETS[e.id]);
-        if (valid.length) return valid;
-      }
-    } catch (_) {}
-    return DEFAULT_LAYOUT.map(e => ({ ...e }));
+  /**
+   * Per-render cache of the layout, augmented with the legacy colSpan /
+   * rowSpan fields the current 4-col grid renderer uses. Rebuilt at the
+   * top of `_renderGrid()` from the LayoutStore. Never mutated directly;
+   * layout changes go through the store helpers and then call `_renderGrid`.
+   * @returns {Array<{id:string,w:number,h:number,colSpan:number,rowSpan:number}>}
+   */
+  _readLayout() {
+    return getLayout().map(e => ({
+      ...e,
+      colSpan: toLegacyColSpan(e.w),
+      rowSpan: toLegacyRowSpan(e.h),
+    }));
   }
 
+  /** Flush the current in-memory layout to the store (called after drag/resize
+   *  handlers that mutate `this._layout` before render). No-op for reads. */
   _saveLayout() {
-    localStorage.setItem(LS_LAYOUT, JSON.stringify(this._layout));
+    // Drag/resize handlers still mutate `this._layout` directly (a transient
+    // cache). This method syncs the v3 fields back to the store.
+    setLayout(this._layout.map(e => ({ id: e.id, w: e.w, h: e.h })));
+  }
+
+  /** Reset to v3 default — exposed on the component for the omni-bar action
+   *  and the right-click menu (per plan §4.3). */
+  _resetLayout() {
+    resetLayoutInStore(DEFAULT_LAYOUT);
+    this._renderGrid();
   }
 
   // ── Hero ──────────────────────────────────────────────────────
@@ -589,11 +624,13 @@ export class KmDashboard extends HTMLElement {
     const grid = this.shadowRoot.getElementById('grid');
     grid.innerHTML = '';
 
+    this._layout = this._readLayout();
+
     this._layout.forEach((entry, idx) => {
       const def  = WIDGETS[entry.id];
       if (!def) return;
-      const cols = entry.colSpan || def.colSpan;
-      const rows = entry.rowSpan || def.rowSpan;
+      const cols = entry.colSpan || toLegacyColSpan(def.defaultW);
+      const rows = entry.rowSpan || toLegacyRowSpan(def.defaultH);
 
       const cell = document.createElement('div');
       cell.className = 'wgt-cell';
@@ -625,9 +662,12 @@ export class KmDashboard extends HTMLElement {
       rm.textContent = '×';
       rm.addEventListener('click', e => {
         e.stopPropagation();
-        const curIdx = this._layout.findIndex(x => x.id === entry.id);
-        if (curIdx !== -1) this._layout.splice(curIdx, 1);
-        this._saveLayout();
+        const cur = getLayout();
+        const curIdx = cur.findIndex(x => x.id === entry.id);
+        if (curIdx !== -1) {
+          cur.splice(curIdx, 1);
+          setLayout(cur);
+        }
         this._renderGrid();
       });
       overlay.appendChild(rm);
@@ -745,6 +785,9 @@ export class KmDashboard extends HTMLElement {
 
       entry.colSpan = newCol;
       entry.rowSpan = newRow;
+      // Map legacy 4-col span back to v3 12-col width/height for persistence.
+      entry.w = newCol * 3;
+      entry.h = newRow;
       cell.style.gridColumn = `span ${newCol}`;
       cell.style.gridRow    = `span ${newRow}`;
 
@@ -832,12 +875,13 @@ export class KmDashboard extends HTMLElement {
         c.classList.remove('drag-over', 'dragging'));
 
       if (targetId && targetId !== entry.id) {
-        const fi = this._layout.findIndex(x => x.id === entry.id);
-        const ti = this._layout.findIndex(x => x.id === targetId);
+        const cur = getLayout();
+        const fi = cur.findIndex(x => x.id === entry.id);
+        const ti = cur.findIndex(x => x.id === targetId);
         if (fi !== -1 && ti !== -1) {
-          const [item] = this._layout.splice(fi, 1);
-          this._layout.splice(ti, 0, item);
-          this._saveLayout();
+          const [item] = cur.splice(fi, 1);
+          cur.splice(ti, 0, item);
+          setLayout(cur);
           this._renderGrid();
         }
       }
@@ -852,7 +896,7 @@ export class KmDashboard extends HTMLElement {
   _openPicker() {
     const backdrop = this.shadowRoot.getElementById('picker-backdrop');
     const grid     = this.shadowRoot.getElementById('picker-grid');
-    const active   = new Set(this._layout.map(e => e.id));
+    const active   = new Set(getLayout().map(e => e.id));
     const avail    = Object.entries(WIDGETS).filter(([id]) => !active.has(id));
 
     if (!avail.length) {
@@ -867,7 +911,7 @@ export class KmDashboard extends HTMLElement {
         item.addEventListener('click', () => {
           const id  = item.dataset.wid;
           const def = WIDGETS[id];
-          this._layout.push({ id, colSpan: def.colSpan, rowSpan: def.rowSpan });
+          this._layout.push({ id, w: def.defaultW, h: def.defaultH, colSpan: toLegacyColSpan(def.defaultW), rowSpan: toLegacyRowSpan(def.defaultH) });
           this._saveLayout();
           this._renderGrid();
           this._closePicker();
@@ -890,7 +934,7 @@ export class KmDashboard extends HTMLElement {
       ?.addEventListener('click', () => this._setEditMode(false));
     this.shadowRoot.getElementById('btn-reset')
       ?.addEventListener('click', () => {
-        this._layout = DEFAULT_LAYOUT.map(e => ({ ...e }));
+        this._layout = DEFAULT_LAYOUT.map(e => ({ ...e, colSpan: toLegacyColSpan(e.w), rowSpan: toLegacyRowSpan(e.h) }));
         this._saveLayout();
         this._renderGrid();
         this._setEditMode(false);

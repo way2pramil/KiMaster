@@ -19,3 +19,9 @@ export const SETTINGS = 'km-settings';
 
 /** Serialised export profiles array (JSON) */
 export const EXPORT_PROFILES = 'km-export-profiles';
+
+/** Dashboard widget layout (v3 shape — array of {id,w,h}; owned by LayoutStore) */
+export const DASHBOARD_LAYOUT  = 'km-dash-layout-v3';
+
+/** Dashboard widget ids that the user has hidden (array of strings) */
+export const DASHBOARD_HIDDEN  = 'km-dash-hidden';

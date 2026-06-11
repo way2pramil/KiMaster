@@ -289,6 +289,13 @@ function _buildPaletteItems(palette) {
       description: 'Show all keybinds and gestures', kind: 'action',  kbd: ['?'],
       action: () => toggleShortcutSheet(),
     },
+    { id: 'act-reset-dashboard', label: 'Reset Dashboard Layout', icon: 'layout',
+      description: 'Restore the default widget order and sizes', kind: 'action',
+      action: () => {
+        const dash = document.querySelector('km-dashboard');
+        if (dash && typeof dash._resetLayout === 'function') dash._resetLayout();
+      },
+    },
   ];
 
   if (store.bridgeConnected) {

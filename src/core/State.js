@@ -197,6 +197,21 @@ export const store = createStore({
   /** @type {'compact'|'cozy'|'comfortable'} — drives [data-density] on <html> */
   density: 'cozy',
 
+  /**
+   * Dashboard widget layout (v3 plan §4.3 / §11.1).
+   * Shape: Array<{ id: string, w: number, h: number }>.
+   * Owned by `Dashboard/layout/LayoutStore.js` — never mutate directly;
+   * call `setLayout / resizeWidget / moveWidget / resetLayout`.
+   * @type {Array<{id:string,w:number,h:number}>}
+   */
+  dashboardLayout: [],
+
+  /**
+   * Widget ids the user has hidden. Owned by LayoutStore.
+   * @type {string[]}
+   */
+  hiddenWidgets: [],
+
   /** @type {string|null} */
   appVersion: null,
 
