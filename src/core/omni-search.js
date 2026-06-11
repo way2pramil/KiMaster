@@ -51,12 +51,18 @@ export function createSearcher(items, opts) {
      */
     search(query, limit = 50) {
       const q = (query ?? '').trim();
-      if (!q) return items.slice(0, limit).map(it => ({ ...it, _score: 0, _matches: [] }));
-      return fuse.search(q, { limit }).map(r => ({
-        ...r.item,
-        _score:   r.score   ?? 0,
-        _matches: r.matches ?? [],
-      }));
+      if (!q) {
+        return items.slice(0, limit).map(it => {
+          it._score = 0;
+          it._matches = [];
+          return it;
+        });
+      }
+      return fuse.search(q, { limit }).map(r => {
+        r.item._score   = r.score   ?? 0;
+        r.item._matches = r.matches ?? [];
+        return r.item;
+      });
     },
     /** Recompute the index after the underlying list changes. */
     refresh() { fuse.setCollection(items); },

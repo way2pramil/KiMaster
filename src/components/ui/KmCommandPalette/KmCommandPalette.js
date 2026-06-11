@@ -317,8 +317,10 @@ export class KmCommandPalette extends HTMLElement {
    * @param {Array<{label:string, items:Array<{id,label,icon?,description?,kbd?,kind?,tags?,action}>}>} groups
    */
   setItems(groups) {
-    this._groups    = groups;
-    this._corpus    = groups.flatMap(g => g.items);
+    this._groups   = groups;
+    this._corpus   = groups.flatMap(g => g.items);
+    this._groupById = new Map();
+    for (const g of groups) for (const it of g.items) this._groupById.set(it.id, g);
     this._searcher  = createSearcher(this._corpus);
     if (this.hasAttribute('open')) this._renderResults();
   }
@@ -366,11 +368,13 @@ export class KmCommandPalette extends HTMLElement {
     const hits     = searcher.search(stripped, 60);
 
     // 3. Group hits by their original group label, preserving display order.
+    //    Use the id-based lookup because fuse.js may return clone objects whose
+    //    reference is not in the original `groups[i].items` array.
     const groupOrder = this._groups.map(g => g.label);
     const grouped    = new Map();
     for (const g of this._groups) grouped.set(g.label, []);
     for (const hit of hits) {
-      const g = this._groups.find(g => g.items.includes(hit)) || this._groups[0];
+      const g = this._groupById.get(hit.id) || this._groups[0];
       if (!g) continue;
       const bucket = grouped.get(g.label);
       if (bucket) bucket.push(hit);
