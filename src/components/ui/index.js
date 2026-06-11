@@ -13,6 +13,7 @@ export { KmSidebar }      from './KmSidebar/KmSidebar.js';
 export { KmDialog }       from './KmDialog/KmDialog.js';
 export { KmGhostLayer }      from './KmGhostLayer/KmGhostLayer.js';
 export { KmCommandPalette }  from './KmCommandPalette/KmCommandPalette.js';
+export { KmShortcutSheet }   from './KmShortcutSheet/KmShortcutSheet.js';
 
 // Feature components (imported here so they register on first ui/index.js import)
 export { KmNotesEditor }     from '../features/NotesEditor/NotesEditor.js';

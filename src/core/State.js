@@ -194,6 +194,9 @@ export const store = createStore({
   /** @type {'dark'|'light'} */
   theme: 'dark',
 
+  /** @type {'compact'|'cozy'|'comfortable'} — drives [data-density] on <html> */
+  density: 'cozy',
+
   /** @type {string|null} */
   appVersion: null,
 

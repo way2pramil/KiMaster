@@ -135,9 +135,8 @@ TEMPLATE.innerHTML = `
 
   /* ── Focus ── */
   button:focus-visible {
-    outline: 1.5px solid var(--km-accent);
-    outline-offset: 2px;
-    box-shadow: 0 0 0 3px var(--km-accent-muted);
+    outline: none;
+    box-shadow: var(--km-focus-ring);
   }
 
   /* ── Loading ── */

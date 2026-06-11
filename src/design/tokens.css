@@ -210,6 +210,44 @@
   --km-shadow-card:        rgba(0, 0, 0, 0.35);
   --km-shadow-card-strong: rgba(0, 0, 0, 0.45);
   --km-shadow-inset:       rgba(0, 0, 0, 0.25);  --km-shadow-backdrop:     rgba(0, 0, 0, 0.6);  --km-glass-bg:           rgba(12, 12, 16, 0.97);
+
+  /* ── Focus ring — always visible on keyboard nav, hidden on mouse click ─ */
+  --km-focus-ring:         0 0 0 2px var(--km-bg-app), 0 0 0 4px var(--km-accent);
+
+  /* ── Density — default to 'cozy' (current sizing) ───────────────────────
+   * Three density tiers cascade through every widget via tokens. Switch
+   * by setting [data-density="compact|comfortable"] on <html>. The omni-bar
+   * action '> Toggle density' and the 'D' shortcut cycle between them.
+   *   compact     : tight padding (10), tight gap (8),  small radius (6)
+   *   cozy (base) : default (16)        (12)            (8)
+   *   comfortable : loose padding (22), loose gap (16), large radius (12) */
+  --km-density-pad:        16px;   /* widget inner padding */
+  --km-density-gap:        12px;   /* grid gap */
+  --km-density-radius:     8px;    /* card radius */
+  --km-density-font-base:  14px;   /* body font size */
+  --km-density-line-base:  1.55;   /* line height */
+
+  --km-grid-gap:           var(--km-density-gap);
+  --km-widget-pad:         var(--km-density-pad);
+  --km-widget-radius:      var(--km-density-radius);
+}
+
+:root[data-density="compact"] {
+  --km-density-pad:        10px;
+  --km-density-gap:        8px;
+  --km-density-radius:     6px;
+  --km-density-font-base:  13px;
+  --km-density-line-base:  1.5;
+  --km-font-size-base:     13px;
+}
+
+:root[data-density="comfortable"] {
+  --km-density-pad:        22px;
+  --km-density-gap:        16px;
+  --km-density-radius:     12px;
+  --km-density-font-base:  15px;
+  --km-density-line-base:  1.65;
+  --km-font-size-base:     15px;
 }
 
 /* ── Liquid glass — floating overlays, command palette, modals ─────────── */
@@ -313,4 +351,20 @@
   --km-shadow-card:        rgba(15, 23, 42, 0.08);
   --km-shadow-card-strong: rgba(15, 23, 42, 0.14);
   --km-shadow-inset:       rgba(15, 23, 42, 0.20);  --km-shadow-backdrop:     rgba(15, 23, 42, 0.40);  --km-glass-bg:           rgba(255, 255, 255, 0.96);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * MOTION PREFERENCES — per plan §8.2, every spring collapses to 0ms under
+ * prefers-reduced-motion: reduce. No exceptions. The dashboard must work
+ * for users who cannot tolerate any animation.
+ * ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:        0.001ms !important;
+    animation-iteration-count: 1       !important;
+    transition-duration:       0.001ms !important;
+    scroll-behavior:           auto    !important;
+  }
 }

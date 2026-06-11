@@ -96,6 +96,7 @@ TEMPLATE.innerHTML = `
   }
   .close-btn:hover  { color: var(--km-text-primary); background: var(--km-bg-surface); }
   .close-btn:active { transform: scale(0.94); }
+  .close-btn:focus-visible { outline: none; box-shadow: var(--km-focus-ring); }
 
   /* ── Body ── */
   .body {

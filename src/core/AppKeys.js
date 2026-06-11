@@ -11,6 +11,9 @@
 /** Active UI theme: 'dark' | 'light' */
 export const THEME    = 'km-theme';
 
+/** UI density: 'compact' | 'cozy' | 'comfortable' */
+export const DENSITY  = 'km-density';
+
 /** Serialised settings object (JSON) */
 export const SETTINGS = 'km-settings';
 

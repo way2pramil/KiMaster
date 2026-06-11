@@ -34,7 +34,7 @@ import { store, subscribe } from './core/State.js';
 import { Router }           from './core/Router.js';
 import { Logger }           from './core/Logger.js';
 import { notify }           from './core/Notify.js';
-import { THEME, SETTINGS }  from './core/AppKeys.js';
+import { THEME, DENSITY, SETTINGS } from './core/AppKeys.js';
 import { GET_APP_INFO, GET_KICAD_CLI_PATH, SCAN_KICAD_INSTANCES } from './core/AppCommands.js';
 import { KM_NAV, KM_NOTES_LINK_CLICK } from './core/AppEvents.js';
 import {
@@ -79,8 +79,10 @@ async function boot() {
 
   setupRouter();
   setupTheme();
+  setupDensity();
   setupSidebarNav();
   setupCommandPalette();
+  setupGlobalKeymap();
 
   // Auto-connect to KiCad bridge (polls every 3s until connected).
   // Respects the user's `bridgeAutoConnect` and `bridgePort` settings.
@@ -275,6 +277,18 @@ function _buildPaletteItems(palette) {
       description: 'Change accent color, font, density', kind: 'action',
       action: () => Router.navigate('/settings')
     },
+    { id: 'act-toggle-theme',  label: 'Toggle Theme',  icon: 'sun',     kbd: ['T'],
+      description: `Switch to ${store.theme === 'dark' ? 'light' : 'dark'} mode`, kind: 'action',
+      action: () => toggleTheme(),
+    },
+    { id: 'act-toggle-density', label: 'Toggle Density', icon: 'grid',   kbd: ['D'],
+      description: `Cycle compact → cozy → comfortable (currently: ${store.density})`, kind: 'action',
+      action: () => cycleDensity(),
+    },
+    { id: 'act-shortcut-sheet',  label: 'Keyboard Shortcuts', icon: 'keyboard',
+      description: 'Show all keybinds and gestures', kind: 'action',  kbd: ['?'],
+      action: () => toggleShortcutSheet(),
+    },
   ];
 
   if (store.bridgeConnected) {
@@ -378,6 +392,78 @@ function applyTheme(t) {
     document.documentElement.style.removeProperty('--km-bg-app');
     document.documentElement.style.removeProperty('--km-sidebar-bg');
   }
+}
+
+// ── Density — per plan §10. Drives [data-density] on <html>; tokens.css
+// defines the three density token maps (compact / cozy / comfortable).
+// Persists in its own localStorage key so it survives even if the user
+// nukes the settings blob. Cycle: compact → cozy → comfortable → compact.
+const DENSITY_ORDER = ['compact', 'cozy', 'comfortable'];
+function setupDensity() {
+  const saved = localStorage.getItem(DENSITY) || 'cozy';
+  store.density = DENSITY_ORDER.includes(saved) ? saved : 'cozy';
+  applyDensity(store.density);
+  subscribe('density', applyDensity);
+}
+function applyDensity(d) {
+  document.documentElement.setAttribute('data-density', d);
+  localStorage.setItem(DENSITY, d);
+}
+function cycleDensity() {
+  const i = DENSITY_ORDER.indexOf(store.density);
+  const next = DENSITY_ORDER[(i + 1) % DENSITY_ORDER.length];
+  store.density = next;
+  notify({ type: 'info', title: 'Density', message: `Switched to ${next}`, duration: 1800 });
+}
+function toggleTheme() {
+  store.theme = store.theme === 'dark' ? 'light' : 'dark';
+  notify({ type: 'info', title: 'Theme', message: `Switched to ${store.theme}`, duration: 1800 });
+}
+
+// ── Global keymap — per plan §7.3. Runs once on boot. Listens for keypresses
+// that should fire anywhere in the app unless an editable field is focused
+// (so typing 'd' in a search box doesn't toggle density). The shortcut sheet
+// (`?`) and the omni-bar both surface this same list.
+const GLOBAL_KEYMAP = [
+  { key: '?', shift: true, label: 'Show shortcut sheet',           run: () => toggleShortcutSheet() },
+  { key: 'd', label: 'Toggle density (compact / cozy / comfortable)', run: () => cycleDensity() },
+  { key: 't', label: 'Toggle theme (dark / light)',                run: () => toggleTheme() },
+  { key: '.', meta: true, label: 'Open widget picker',            run: () => notify({ type: 'info', message: 'Widget picker is not yet implemented — see DASHBOARD_V3_PLAN §3.4', duration: 2500 }) },
+];
+function setupGlobalKeymap() {
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey) return;          // browser / Alt-drag territory
+    if (_isEditableTarget(e.target)) return;    // don't hijack typing in inputs
+    if (e.metaKey && e.key !== '.') return;     // let ⌘K / ⌘P / ⌘S go to their owners
+
+    for (const chord of GLOBAL_KEYMAP) {
+      if (e.key.toLowerCase() !== chord.key) continue;
+      if (Boolean(chord.shift) !== e.shiftKey) continue;
+      if (Boolean(chord.meta)   !== e.metaKey)  continue;
+      if (Boolean(chord.alt)    !== e.altKey)   continue;
+      if (Boolean(chord.ctrl)   !== e.ctrlKey)  continue;
+      e.preventDefault();
+      chord.run();
+      return;
+    }
+  });
+}
+function _isEditableTarget(t) {
+  if (!t) return false;
+  const tag = t.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (t.isContentEditable) return true;
+  // km-* web components with an open input — treat as editable
+  if (typeof t.closest === 'function' && t.closest('km-command-palette[open], km-dialog[open]')) return true;
+  return false;
+}
+function toggleShortcutSheet() {
+  const existing = document.getElementById('shortcut-sheet');
+  if (existing) { existing.close(); return; }
+  const sheet = document.createElement('km-shortcut-sheet');
+  sheet.id = 'shortcut-sheet';
+  sheet.chords = GLOBAL_KEYMAP;
+  document.body.appendChild(sheet);
 }
 
 // ── Header helpers ────────────────────────────────────────────────────────────
