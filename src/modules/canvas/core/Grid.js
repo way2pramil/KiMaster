@@ -82,6 +82,11 @@ export class Grid {
     return { x: Math.round(pt.x / s) * s, y: Math.round(pt.y / s) * s };
   }
 
+  refresh() {
+    this.#lastDrawnKey = '';
+    this._redraw();
+  }
+
   _redraw() {
     const vp    = this.#viewport;
     const scale = vp.scaled;

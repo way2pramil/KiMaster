@@ -1,4 +1,4 @@
-import { Graphics, BitmapText } from 'pixi.js';
+import { Container, Graphics, BitmapText } from 'pixi.js';
 
 const BG_COLOR   = 0x1a1a1a;
 const TEXT_COLOR  = 0xcccccc;
@@ -14,7 +14,7 @@ export class DragMeasure {
 
   constructor(scene, viewport) {
     this.#viewport  = viewport;
-    this.#container = new Graphics();
+    this.#container = new Container();
     this.#container.eventMode = 'none';
     this.#container.zIndex    = 10001;
     this.#container.visible   = false;

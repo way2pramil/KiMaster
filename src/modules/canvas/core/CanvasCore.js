@@ -125,6 +125,11 @@ export class CanvasCore {
     this.#selection?.clear();
     this.#controlPoints?.hide();
     if (valid.length) this.#vpHelper?.fitElements(valid, 5, false);
+    const s = this.#vp.scaled;
+    this.#renderer?.onZoomChange(s);
+    this.#marquee?.setScale(s);
+    this.#grid?.refresh();
+    this.#spatial?.cullToViewport(this.#vpHelper.worldBounds);
   }
 
   setTool(id) {
@@ -163,8 +168,6 @@ export class CanvasCore {
       resolution:   Math.min(window.devicePixelRatio || 1, 2),
     });
     app.canvas.style.display = 'block';
-    app.canvas.style.width   = '100%';
-    app.canvas.style.height  = '100%';
     container.appendChild(app.canvas);
     this.#container = container;
 
@@ -303,6 +306,8 @@ export class CanvasCore {
     if (w < 1 || h < 1) return;
     this.#app.renderer.resize(w, h);
     this.#vp.resize(w, h);
+    this.#grid?.refresh();
+    this.#spatial?.cullToViewport(this.#vpHelper.worldBounds);
   }
 
   _refreshControlPoints() {
@@ -340,16 +345,20 @@ export class CanvasCore {
 
   _makeCtx() {
     return {
-      viewport:     this.#vp,
-      vpHelper:     this.#vpHelper,
-      spatial:      this.#spatial,
-      selection:    this.#selection,
-      marquee:      this.#marquee,
-      renderer:     this.#renderer,
+      viewport:      this.#vp,
+      vpHelper:      this.#vpHelper,
+      spatial:       this.#spatial,
+      selection:     this.#selection,
+      marquee:       this.#marquee,
+      renderer:      this.#renderer,
       controlPoints: this.#controlPoints,
       hover:         this.#hover,
-      grid:         this.#grid,
-      undo:         this.#undo,
+      grid:          this.#grid,
+      undo:          this.#undo,
+      crosshair:     this.#crosshair,
+      snapIndicator: this.#snapIndicator,
+      alignGuides:   this.#alignGuides,
+      dragMeasure:   this.#dragMeasure,
     };
   }
 }

@@ -60,17 +60,17 @@ export class AlignGuides {
 
     let snapX = null, snapY = null;
     let bestDx = thresh, bestDy = thresh;
+    let matchedTpX = null, matchedTpY = null;
 
     for (const tp of testPoints) {
       for (const anchor of this.#anchors) {
         const dx = Math.abs(tp.x - anchor.x);
         const dy = Math.abs(tp.y - anchor.y);
-        if (dx < bestDx) { bestDx = dx; snapX = anchor.x; }
-        if (dy < bestDy) { bestDy = dy; snapY = anchor.y; }
+        if (dx < bestDx) { bestDx = dx; snapX = anchor.x; matchedTpX = tp.x; }
+        if (dy < bestDy) { bestDy = dy; snapY = anchor.y; matchedTpY = tp.y; }
       }
     }
 
-    // Draw guide lines
     if (snapX !== null) {
       this.#g.moveTo(snapX, tl.y).lineTo(snapX, br.y);
       this.#g.stroke({ color: GUIDE_COLOR, width: sw, alpha: GUIDE_ALPHA });
@@ -80,7 +80,11 @@ export class AlignGuides {
       this.#g.stroke({ color: GUIDE_COLOR, width: sw, alpha: GUIDE_ALPHA });
     }
 
-    return { snapX, snapY };
+    return {
+      snapX, snapY,
+      deltaX: snapX !== null ? snapX - matchedTpX : 0,
+      deltaY: snapY !== null ? snapY - matchedTpY : 0,
+    };
   }
 
   hide() {

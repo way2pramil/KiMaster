@@ -21,6 +21,7 @@ export class SelectTool extends ToolBase {
   #cpElement      = null;
   #cpOriginal     = null;
   #cpStartBounds  = null;
+  #rotOrigins     = null;
   #lastNudgeTime  = 0;
   #lastOverlapIdx = -1;
 
@@ -32,6 +33,10 @@ export class SelectTool extends ToolBase {
     this.ctx.marquee.cancel();
     this.ctx.hover?.hide();
     this.ctx.controlPoints?.hide();
+    this.ctx.crosshair?.hide();
+    this.ctx.alignGuides?.hide();
+    this.ctx.dragMeasure?.hide();
+    this.ctx.snapIndicator?.hide();
     this.#state = 'idle';
   }
 
@@ -64,6 +69,13 @@ export class SelectTool extends ToolBase {
           }
         } else if (cp.bounds) {
           this.#cpStartBounds = { ...cp.bounds };
+          if (cp.role === 'rotation') {
+            this.#rotOrigins = new Map();
+            for (const id of store.canvasSelectedIds) {
+              const rec = this.ctx.spatial.get(id);
+              if (rec) this.#rotOrigins.set(id, structuredClone(rec.element));
+            }
+          }
         }
         this.#state = 'pressed-cp';
         this.ctx.viewport.pause = true;
@@ -102,12 +114,14 @@ export class SelectTool extends ToolBase {
     const noSnap = data?.ctrlKey;
 
     if (this.#state === 'idle') {
+      this.ctx.crosshair?.update(world.x, world.y);
       this._updateHover(world, scale);
       this._updateCursor(world, scale);
       return;
     }
 
     if (this.#state === 'grabbing') {
+      this.ctx.crosshair?.update(world.x, world.y);
       this._applyElementMove(world, noSnap, data?.shiftKey);
       return;
     }
@@ -132,9 +146,11 @@ export class SelectTool extends ToolBase {
       if (!pastThreshold) return;
       this.#state = 'dragging-elements';
       this.ctx.controlPoints?.hide();
+      this.ctx.alignGuides?.buildAnchors(store.canvasSelectedIds);
       this._updateCursor(world, scale);
     }
     if (this.#state === 'dragging-elements') {
+      this.ctx.crosshair?.update(world.x, world.y);
       this._applyElementMove(world, noSnap, data?.shiftKey);
       return;
     }
@@ -146,6 +162,7 @@ export class SelectTool extends ToolBase {
       this._updateCursor(world, scale);
     }
     if (this.#state === 'dragging-marquee') {
+      this.ctx.crosshair?.update(world.x, world.y);
       this.ctx.marquee.update(world.x, world.y);
       return;
     }
@@ -322,19 +339,20 @@ export class SelectTool extends ToolBase {
     let rawDx = world.x - this.#pressWorld.x;
     let rawDy = world.y - this.#pressWorld.y;
 
-    // Shift = axis-lock (constrain to horizontal or vertical)
     if (shiftKey) {
       if (Math.abs(rawDx) > Math.abs(rawDy)) rawDy = 0;
       else rawDx = 0;
     }
 
     let dx = rawDx, dy = rawDy;
+    let didSnap = false;
     if (!noSnap && this.ctx.grid) {
       const firstOrigin = this.#dragOrigins.values().next().value;
       if (firstOrigin) {
         const snapped = this.ctx.grid.snap({ x: firstOrigin.x + rawDx, y: firstOrigin.y + rawDy });
         dx = snapped.x - firstOrigin.x;
         dy = snapped.y - firstOrigin.y;
+        didSnap = (Math.abs(dx - rawDx) > 1e-9 || Math.abs(dy - rawDy) > 1e-9);
       }
     }
 
@@ -350,9 +368,57 @@ export class SelectTool extends ToolBase {
       this.ctx.spatial.update(id, upd);
     }
     this.ctx.renderer.markDirty('all');
+
+    // Alignment guides — check current selection bounds against other elements
+    if (this.ctx.alignGuides) {
+      const bounds = this.ctx.spatial.selectionBounds(store.canvasSelectedIds);
+      if (bounds) {
+        const snap = this.ctx.alignGuides.check(bounds);
+        if (snap && !noSnap) {
+          const alignDx = snap.deltaX;
+          const alignDy = snap.deltaY;
+          if (Math.abs(alignDx) > 1e-9 || Math.abs(alignDy) > 1e-9) {
+            for (const [id] of this.#dragOrigins) {
+              const rec = this.ctx.spatial.get(id);
+              if (!rec) continue;
+              const upd = { x: rec.element.x + alignDx, y: rec.element.y + alignDy };
+              if (rec.element.x2 != null) upd.x2 = rec.element.x2 + alignDx;
+              if (rec.element.y2 != null) upd.y2 = rec.element.y2 + alignDy;
+              if (rec.element.mid_x != null) upd.mid_x = rec.element.mid_x + alignDx;
+              if (rec.element.mid_y != null) upd.mid_y = rec.element.mid_y + alignDy;
+              if (rec.element.points) {
+                upd.points = rec.element.points.map((v, i) => v + (i % 2 === 0 ? alignDx : alignDy));
+              }
+              this.ctx.spatial.update(id, upd);
+            }
+            this.ctx.renderer.markDirty('all');
+          }
+        }
+      }
+    }
+
+    // Snap indicator flash when grid snap occurs
+    if (didSnap && this.ctx.snapIndicator) {
+      const firstOrigin = this.#dragOrigins.values().next().value;
+      if (firstOrigin) {
+        this.ctx.snapIndicator.flash(firstOrigin.x + dx, firstOrigin.y + dy);
+      }
+    }
+
+    // Drag measurement overlay
+    if (this.ctx.dragMeasure) {
+      const firstOrigin = this.#dragOrigins.values().next().value;
+      if (firstOrigin) {
+        this.ctx.dragMeasure.show(firstOrigin.x, firstOrigin.y, firstOrigin.x + dx, firstOrigin.y + dy);
+      }
+    }
   }
 
   _commitElementMove(scale) {
+    this.ctx.alignGuides?.hide();
+    this.ctx.dragMeasure?.hide();
+    this.ctx.snapIndicator?.hide();
+
     let moved = false;
     for (const [id, origin] of this.#dragOrigins) {
       const rec = this.ctx.spatial.get(id);
@@ -386,6 +452,9 @@ export class SelectTool extends ToolBase {
       this.ctx.spatial.update(id, origin);
     }
     this.ctx.renderer.markDirty('all');
+    this.ctx.alignGuides?.hide();
+    this.ctx.dragMeasure?.hide();
+    this.ctx.snapIndicator?.hide();
   }
 
   // ── Grab mode (M / G key) ─────────────────────────────────────────────────
@@ -403,6 +472,7 @@ export class SelectTool extends ToolBase {
 
     this.#state = 'grabbing';
     this.ctx.controlPoints?.hide();
+    this.ctx.alignGuides?.buildAnchors(store.canvasSelectedIds);
     this.ctx.viewport.pause = true;
   }
 
@@ -427,7 +497,7 @@ export class SelectTool extends ToolBase {
 
     if (this.#cpElement) {
       const updates = this.ctx.controlPoints.applyDrag(cp, this.#cpElement, snapped.x, snapped.y, snapped);
-      if (updates && !updates.__bbox) {
+      if (updates && !updates.__bbox && !updates.__rotation) {
         this.ctx.spatial.update(this.#cpElement.id, updates);
         this.ctx.renderer.markDirty(this.#cpElement.layer ?? 'all');
         const rec = this.ctx.spatial.get(this.#cpElement.id);
@@ -435,7 +505,9 @@ export class SelectTool extends ToolBase {
       }
     } else if (this.#cpStartBounds) {
       const result = this.ctx.controlPoints.applyDrag(cp, null, snapped.x, snapped.y, snapped);
-      if (result?.__bbox) {
+      if (result?.__rotation) {
+        this._applyRotationDrag(result.angle, result.cx, result.cy, scale);
+      } else if (result?.__bbox) {
         this.ctx.controlPoints.showBBoxForMulti(result.bounds, scale);
       }
     }
@@ -466,7 +538,28 @@ export class SelectTool extends ToolBase {
 
     } else if (this.#cpStartBounds) {
       const result = this.ctx.controlPoints.applyDrag(cp, null, snapped.x, snapped.y, snapped);
-      if (result?.__bbox) {
+      if (result?.__rotation) {
+        this.ctx.undo?.snapshot();
+        const mutations = [...store.canvasMutations];
+        if (this.#rotOrigins) {
+          for (const [id, orig] of this.#rotOrigins) {
+            const rec = this.ctx.spatial.get(id);
+            if (!rec) continue;
+            const diff = {};
+            for (const key of Object.keys(rec.element)) {
+              if (JSON.stringify(rec.element[key]) !== JSON.stringify(orig[key])) {
+                diff[key] = rec.element[key];
+              }
+            }
+            if (Object.keys(diff).length > 0) {
+              mutations.push({ op: 'edit_element', id, updates: diff });
+            }
+          }
+        }
+        store.canvasMutations = mutations;
+        store.canvasIsDirty   = true;
+        this._showControlPoints(scale);
+      } else if (result?.__bbox) {
         this._applyBBoxResize(this.#cpStartBounds, result.bounds);
         this._showControlPoints(scale);
       }
@@ -505,6 +598,43 @@ export class SelectTool extends ToolBase {
     store.canvasMutations = mutations;
     store.canvasIsDirty   = true;
     this.ctx.renderer.markDirty('all');
+  }
+
+  // ── Free rotation via handle drag ──────────────────────────────────────────
+
+  _applyRotationDrag(angle, cx, cy, scale) {
+    if (!this.#rotOrigins) return;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rot = (px, py) => ({
+      x: cx + (px - cx) * cos - (py - cy) * sin,
+      y: cy + (px - cx) * sin + (py - cy) * cos,
+    });
+
+    for (const [id, orig] of this.#rotOrigins) {
+      const p = rot(orig.x, orig.y);
+      const upd = { x: p.x, y: p.y };
+      if (orig.x2 != null && orig.y2 != null) {
+        const p2 = rot(orig.x2, orig.y2);
+        upd.x2 = p2.x; upd.y2 = p2.y;
+      }
+      if (orig.mid_x != null && orig.mid_y != null) {
+        const pm = rot(orig.mid_x, orig.mid_y);
+        upd.mid_x = pm.x; upd.mid_y = pm.y;
+      }
+      if (orig.points) {
+        const pts = [];
+        for (let i = 0; i < orig.points.length; i += 2) {
+          const rp = rot(orig.points[i], orig.points[i + 1]);
+          pts.push(rp.x, rp.y);
+        }
+        upd.points = pts;
+      }
+      this.ctx.spatial.update(id, upd);
+    }
+    this.ctx.renderer.markDirty('all');
+    const bounds = this.ctx.spatial.selectionBounds(store.canvasSelectedIds);
+    if (bounds) this.ctx.controlPoints.showBBoxForMulti(bounds, scale);
   }
 
   // ── Rotation (R = CCW, Shift+R = CW) ──────────────────────────────────────
@@ -841,5 +971,6 @@ export class SelectTool extends ToolBase {
     this.#cpElement     = null;
     this.#cpOriginal    = null;
     this.#cpStartBounds = null;
+    this.#rotOrigins    = null;
   }
 }

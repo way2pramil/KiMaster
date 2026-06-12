@@ -6,6 +6,7 @@ const CP_FILL       = 0xffffff;
 const CP_STROKE     = 0x00d4ff;
 const CP_ACTIVE     = 0xff6644;
 const BBOX_COLOR    = 0x00d4ff;
+const ROT_OFFSET_PX = 20;
 
 export class ControlPoints {
   #g;
@@ -61,7 +62,16 @@ export class ControlPoints {
     if (cp.role === 'center') return 'move';
     if (cp.role === 'radius') return 'ew-resize';
     if (cp.role === 'corner') return 'nwse-resize';
-    if (cp.role === 'bbox-corner' || cp.role === 'bbox-edge') return 'nwse-resize';
+    if (cp.role === 'rotation') return 'grabbing';
+    if (cp.role === 'bbox-corner' || cp.role === 'bbox-edge') {
+      const map = {
+        nw: 'nwse-resize', se: 'nwse-resize',
+        ne: 'nesw-resize', sw: 'nesw-resize',
+        n: 'ns-resize', s: 'ns-resize',
+        e: 'ew-resize', w: 'ew-resize',
+      };
+      return map[cp.anchor] ?? 'nwse-resize';
+    }
     return 'pointer';
   }
 
@@ -129,6 +139,13 @@ export class ControlPoints {
       }
       case 'bbox-edge': {
         return this._bboxResize(cp, pt);
+      }
+      case 'rotation': {
+        const b = cp.bounds;
+        const cx = (b.minX + b.maxX) * 0.5;
+        const cy = (b.minY + b.maxY) * 0.5;
+        const angle = Math.atan2(pt.x - cx, -(pt.y - cy));
+        return { __rotation: true, angle, cx, cy };
       }
     }
     return updates;
@@ -208,7 +225,9 @@ export class ControlPoints {
     const { minX, minY, maxX, maxY } = bounds;
     const cx = (minX + maxX) * 0.5;
     const cy = (minY + maxY) * 0.5;
+    const rotOffset = ROT_OFFSET_PX / this.#scale;
     return [
+      { x: cx,   y: minY - rotOffset, role: 'rotation', bounds },
       { x: minX, y: minY, role: 'bbox-corner', anchor: 'nw', bounds },
       { x: cx,   y: minY, role: 'bbox-edge',   anchor: 'n',  bounds },
       { x: maxX, y: minY, role: 'bbox-corner', anchor: 'ne', bounds },
@@ -252,7 +271,17 @@ export class ControlPoints {
 
     const cpSw = Math.min(sw, hr * 0.4);
     for (const cp of this.#points) {
-      if (cp.role === 'center') {
+      if (cp.role === 'rotation') {
+        if (bboxBounds) {
+          const topCx = (bboxBounds.minX + bboxBounds.maxX) * 0.5;
+          this.#g.moveTo(topCx, bboxBounds.minY).lineTo(cp.x, cp.y + hr);
+          this.#g.stroke({ color: BBOX_COLOR, width: sw, alpha: 0.5 });
+        }
+        this.#g.circle(cp.x, cp.y, hr);
+        this.#g.fill({ color: CP_FILL, alpha: 0.9 });
+        this.#g.circle(cp.x, cp.y, hr);
+        this.#g.stroke({ color: CP_STROKE, width: cpSw });
+      } else if (cp.role === 'center') {
         this.#g.circle(cp.x, cp.y, hr);
         this.#g.fill({ color: CP_FILL, alpha: 0.9 });
         this.#g.circle(cp.x, cp.y, hr);
