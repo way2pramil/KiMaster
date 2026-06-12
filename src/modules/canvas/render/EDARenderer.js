@@ -171,12 +171,16 @@ export class EDARenderer {
     switch (el.type) {
       case 'line': {
         const sw = effectiveStroke(el.stroke_width ?? 0.12, this.#scale);
+        const hr = (sw + halo * 2) * 0.5;
         g.moveTo(el.x, el.y).lineTo(el.x2, el.y2);
-        g.stroke({ color: SEL_COLOR, width: sw + halo * 2, cap: 'round', alpha: SEL_ALPHA });
+        g.stroke({ color: SEL_COLOR, width: sw + halo * 2, alpha: SEL_ALPHA });
+        g.circle(el.x, el.y, hr).fill({ color: SEL_COLOR, alpha: SEL_ALPHA });
+        g.circle(el.x2, el.y2, hr).fill({ color: SEL_COLOR, alpha: SEL_ALPHA });
         break;
       }
       case 'arc': {
         const sw = effectiveStroke(el.stroke_width ?? 0.12, this.#scale);
+        const hr = (sw + halo * 2) * 0.5;
         const result = arcFrom3Points(
           { x: el.x, y: el.y },
           { x: el.mid_x, y: el.mid_y },
@@ -187,7 +191,9 @@ export class EDARenderer {
         } else {
           g.arc(result.cx, result.cy, result.r, result.startAngle, result.endAngle, result.anticlockwise);
         }
-        g.stroke({ color: SEL_COLOR, width: sw + halo * 2, cap: 'round', alpha: SEL_ALPHA });
+        g.stroke({ color: SEL_COLOR, width: sw + halo * 2, alpha: SEL_ALPHA });
+        g.circle(el.x, el.y, hr).fill({ color: SEL_COLOR, alpha: SEL_ALPHA });
+        g.circle(el.x2, el.y2, hr).fill({ color: SEL_COLOR, alpha: SEL_ALPHA });
         break;
       }
       case 'circle': {
@@ -250,12 +256,16 @@ export class EDARenderer {
 
   _drawLine(g, el, color) {
     const sw = effectiveStroke(el.stroke_width ?? 0.12, this.#scale);
+    const r  = sw * 0.5;
     g.moveTo(el.x, el.y).lineTo(el.x2, el.y2);
-    g.stroke({ color, width: sw, cap: 'round', join: 'round' });
+    g.stroke({ color, width: sw });
+    g.circle(el.x, el.y, r).fill({ color });
+    g.circle(el.x2, el.y2, r).fill({ color });
   }
 
   _drawArc(g, el, color) {
     const sw = effectiveStroke(el.stroke_width ?? 0.12, this.#scale);
+    const hr = sw * 0.5;
     const result = arcFrom3Points(
       { x: el.x,    y: el.y    },
       { x: el.mid_x, y: el.mid_y },
@@ -263,12 +273,14 @@ export class EDARenderer {
     );
     if (result.degenerate) {
       g.moveTo(result.x1, result.y1).lineTo(result.x2, result.y2);
-      g.stroke({ color, width: sw, cap: 'round' });
+      g.stroke({ color, width: sw });
     } else {
       const { cx, cy, r, startAngle, endAngle, anticlockwise } = result;
       g.arc(cx, cy, r, startAngle, endAngle, anticlockwise);
-      g.stroke({ color, width: sw, cap: 'round' });
+      g.stroke({ color, width: sw });
     }
+    g.circle(el.x, el.y, hr).fill({ color });
+    g.circle(el.x2, el.y2, hr).fill({ color });
   }
 
   _drawCircle(g, el, color) {

@@ -1,6 +1,7 @@
 import { Graphics } from 'pixi.js';
 
 const CP_SCREEN_PX  = 5;
+const CP_MAX_FRAC   = 0.2;
 const CP_FILL       = 0xffffff;
 const CP_STROKE     = 0x00d4ff;
 const CP_ACTIVE     = 0xff6644;
@@ -12,6 +13,7 @@ export class ControlPoints {
   #points = [];
   #scale  = 1;
   #elementId = null;
+  #elExtent  = Infinity;
 
   constructor(scene) {
     this.#scene = scene;
@@ -24,6 +26,7 @@ export class ControlPoints {
   showForElement(element, viewportScale) {
     this.#scale     = viewportScale;
     this.#elementId = element.id;
+    this.#elExtent  = this._elementExtent(element);
     this.#points    = this._computePoints(element);
     this._redraw();
   }
@@ -31,6 +34,7 @@ export class ControlPoints {
   showBBoxForMulti(bounds, viewportScale) {
     this.#scale     = viewportScale;
     this.#elementId = null;
+    this.#elExtent  = Math.min(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
     this.#points    = this._bboxHandles(bounds);
     this._redraw(bounds);
   }
@@ -42,7 +46,9 @@ export class ControlPoints {
   }
 
   hitTest(worldX, worldY) {
-    const r = (CP_SCREEN_PX * 1.2) / this.#scale;
+    const screenHr = CP_SCREEN_PX / this.#scale;
+    const maxHr = this.#elExtent * CP_MAX_FRAC;
+    const r = Math.min(screenHr, maxHr) * 1.2;
     for (const cp of this.#points) {
       if (Math.hypot(worldX - cp.x, worldY - cp.y) <= r) return cp;
     }
@@ -234,7 +240,9 @@ export class ControlPoints {
   _redraw(bboxBounds) {
     this.#g.clear();
     const sw = Math.max(0.02, 1.0 / this.#scale);
-    const hr = CP_SCREEN_PX / this.#scale;
+    const screenHr = CP_SCREEN_PX / this.#scale;
+    const maxHr = this.#elExtent * CP_MAX_FRAC;
+    const hr = Math.min(screenHr, maxHr);
 
     if (bboxBounds) {
       const b = bboxBounds;
@@ -242,22 +250,58 @@ export class ControlPoints {
       this.#g.stroke({ color: BBOX_COLOR, width: sw, alpha: 0.5 });
     }
 
+    const cpSw = Math.min(sw, hr * 0.4);
     for (const cp of this.#points) {
       if (cp.role === 'center') {
         this.#g.circle(cp.x, cp.y, hr);
         this.#g.fill({ color: CP_FILL, alpha: 0.9 });
         this.#g.circle(cp.x, cp.y, hr);
-        this.#g.stroke({ color: CP_STROKE, width: sw });
+        this.#g.stroke({ color: CP_STROKE, width: cpSw });
         const crossSz = hr * 0.6;
         this.#g.moveTo(cp.x - crossSz, cp.y).lineTo(cp.x + crossSz, cp.y);
         this.#g.moveTo(cp.x, cp.y - crossSz).lineTo(cp.x, cp.y + crossSz);
-        this.#g.stroke({ color: CP_STROKE, width: sw * 0.7 });
+        this.#g.stroke({ color: CP_STROKE, width: cpSw * 0.7 });
       } else {
         this.#g.rect(cp.x - hr, cp.y - hr, hr * 2, hr * 2);
         this.#g.fill({ color: CP_FILL, alpha: 0.9 });
         this.#g.rect(cp.x - hr, cp.y - hr, hr * 2, hr * 2);
-        this.#g.stroke({ color: CP_STROKE, width: sw });
+        this.#g.stroke({ color: CP_STROKE, width: cpSw });
       }
+    }
+  }
+
+  _elementExtent(el) {
+    switch (el.type) {
+      case 'line':
+        return Math.hypot((el.x2 ?? el.x) - el.x, (el.y2 ?? el.y) - el.y);
+      case 'arc':
+        return Math.max(
+          Math.hypot((el.x2 ?? el.x) - el.x, (el.y2 ?? el.y) - el.y),
+          Math.hypot((el.mid_x ?? el.x) - el.x, (el.mid_y ?? el.y) - el.y),
+        );
+      case 'circle': {
+        const r = el.width != null ? el.width : Math.hypot((el.x2 ?? el.x) - el.x, (el.y2 ?? el.y) - el.y) * 2;
+        return r;
+      }
+      case 'rect':
+        return Math.min(Math.abs((el.x2 ?? el.x) - el.x), Math.abs((el.y2 ?? el.y) - el.y));
+      case 'pad':
+      case 'pin':
+        return Math.min(el.width ?? 1, el.height ?? 1);
+      case 'polygon': {
+        const pts = el.points ?? [];
+        if (pts.length < 4) return 1;
+        let mnX = pts[0], mxX = pts[0], mnY = pts[1], mxY = pts[1];
+        for (let i = 2; i < pts.length; i += 2) {
+          if (pts[i] < mnX) mnX = pts[i];
+          if (pts[i] > mxX) mxX = pts[i];
+          if (pts[i + 1] < mnY) mnY = pts[i + 1];
+          if (pts[i + 1] > mxY) mxY = pts[i + 1];
+        }
+        return Math.min(mxX - mnX, mxY - mnY);
+      }
+      default:
+        return Math.min(el.width ?? 1, el.height ?? 1);
     }
   }
 }

@@ -192,8 +192,14 @@ fn extract_fp_poly(node: &Node, id: &str) -> Option<Value> {
         .and_then(|f| f.str_at(1))
         .unwrap_or_else(|| "solid".into());
 
+    // Centroid as anchor point (required by CanvasCore validation)
+    let n_pts = (points.len() / 2) as f64;
+    let cx: f64 = points.iter().step_by(2).sum::<f64>() / n_pts;
+    let cy: f64 = points.iter().skip(1).step_by(2).sum::<f64>() / n_pts;
+
     Some(json!({
         "type": "polygon", "id": id, "layer": layer,
+        "x": cx, "y": cy,
         "points": points,
         "stroke_width": sw,
         "fill": fill,

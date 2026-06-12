@@ -30,6 +30,10 @@ const MIL_DOT_SIZES = [
 
 const DOT_COLOR       = 0x404040;
 const DOT_SCREEN_PX   = 1.2;
+const SUB_DIVISIONS   = 10;
+const SUB_DOT_COLOR   = 0x333333;
+const SUB_DOT_PX      = 0.8;
+const SUB_MIN_SCREEN  = 6;
 const MAX_DOTS        = 60000;
 const ORIGIN_COLOR    = 0x666666;
 const ORIGIN_LENGTH   = 2.0;
@@ -112,6 +116,25 @@ export class Grid {
     const screenSpacing = spacing * scale;
     if (countX < 1 || countY < 1 || screenSpacing < 4) return;
 
+    // Subdivision dots (10x10 within each major cell)
+    const subSpacing = spacing / SUB_DIVISIONS;
+    const subScreen  = subSpacing * scale;
+    if (subScreen >= SUB_MIN_SCREEN) {
+      const subR = SUB_DOT_PX / scale;
+      const subCountX = (countX + 2) * SUB_DIVISIONS;
+      const subCountY = (countY + 2) * SUB_DIVISIONS;
+      if (subCountX * subCountY <= MAX_DOTS) {
+        for (let ix = 0; ix < subCountX; ix++) {
+          for (let iy = 0; iy < subCountY; iy++) {
+            if (ix % SUB_DIVISIONS === 0 && iy % SUB_DIVISIONS === 0) continue;
+            this.#g.circle(startX + ix * subSpacing, startY + iy * subSpacing, subR);
+          }
+        }
+        this.#g.fill({ color: SUB_DOT_COLOR, alpha: 0.35 });
+      }
+    }
+
+    // Major grid dots
     const r = DOT_SCREEN_PX / scale;
 
     for (let ix = 0; ix <= countX + 1; ix++) {

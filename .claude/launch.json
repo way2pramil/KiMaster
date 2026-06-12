@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "kimaster-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 1420
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "1421", "--mode", "development"],
+      "port": 1421
     },
     {
       "name": "kimaster-preview",

@@ -2,7 +2,7 @@ import { ToolBase }  from './ToolBase.js';
 import { store }     from '../../../core/State.js';
 
 const DRAG_THRESHOLD_PX = 4;
-const HIT_TOLERANCE_PX  = 6;
+const HIT_TOLERANCE_PX  = 10;
 const NUDGE_SMALL       = 0.1;
 const NUDGE_LARGE       = 1.0;
 

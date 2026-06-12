@@ -196,11 +196,19 @@ export class SpatialLayer {
         }
         return minD;
       }
+      case 'text': {
+        const b = this.elementAABB(el);
+        if (wx >= b.minX && wx <= b.maxX && wy >= b.minY && wy <= b.maxY) return 0;
+        const dx = Math.max(0, b.minX - wx, wx - b.maxX);
+        const dy = Math.max(0, b.minY - wy, wy - b.maxY);
+        return Math.hypot(dx, dy);
+      }
       default: {
         const b = this.elementAABB(el);
-        const cx = (b.minX + b.maxX) * 0.5;
-        const cy = (b.minY + b.maxY) * 0.5;
-        return Math.hypot(wx - cx, wy - cy);
+        if (wx >= b.minX && wx <= b.maxX && wy >= b.minY && wy <= b.maxY) return 0;
+        const dx = Math.max(0, b.minX - wx, wx - b.maxX);
+        const dy = Math.max(0, b.minY - wy, wy - b.maxY);
+        return Math.hypot(dx, dy);
       }
     }
   }

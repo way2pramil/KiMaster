@@ -15,6 +15,7 @@ import { PanTool }          from '../tools/PanTool.js';
 import { installFont }            from '../render/TextRenderer.js';
 import { applyTessellationFix }   from '../render/TessellationFix.js';
 import { store, subscribe } from '../../../core/State.js';
+import { normalizeLayer }   from '../render/LayerManager.js';
 
 const _instances = new Map();
 
@@ -106,6 +107,9 @@ export class CanvasCore {
     if (valid.length !== elements.length) {
       console.warn(`[CanvasCore] filtered ${elements.length - valid.length} invalid elements`);
     }
+    for (const el of valid) {
+      if (el.layer) el.layer = normalizeLayer(el.layer);
+    }
     store.canvasElements = valid;
     this.#renderer?.load(valid);
     this.#spatial?.load(valid);
@@ -178,6 +182,7 @@ export class CanvasCore {
     this.#spatial      = new SpatialLayer(scene);
     this.#selection    = new SelectionManager(this.#spatial);
     this.#marquee      = new MarqueeOverlay(scene);
+    this.#marquee.setScale(vp.scaled);
     this.#controlPoints = new ControlPoints(scene);
     this.#hover        = new HoverOverlay(scene);
     this.#grid         = new Grid(scene, vp);
@@ -185,6 +190,7 @@ export class CanvasCore {
 
     vp.on('zoomed', () => {
       this.#renderer.onZoomChange(vp.scaled);
+      this.#marquee.setScale(vp.scaled);
       this.#spatial.cullToViewport(this.#vpHelper.worldBounds);
       this._refreshControlPoints();
     });

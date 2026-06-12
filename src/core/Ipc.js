@@ -429,7 +429,7 @@ async function _mockInvoke(cmd, _args) {
         { type: 'line', id: 'fab-b', layer: 'F.Fab', x:  3.5, y:  2.0, x2: -3.5, y2:  2.0, stroke_width: 0.1 },
         { type: 'line', id: 'fab-l', layer: 'F.Fab', x: -3.5, y:  2.0, x2: -3.5, y2: -2.0, stroke_width: 0.1 },
         // Pin 1 indicator polygon (triangle on F.Fab)
-        { type: 'polygon', id: 'fab-pin1', layer: 'F.Fab', points: [-3.5, -2.0, -2.5, -2.0, -3.5, -1.0], stroke_width: 0.1, fill: 'solid' },
+        { type: 'polygon', id: 'fab-pin1', layer: 'F.Fab', x: -3.167, y: -1.667, points: [-3.5, -2.0, -2.5, -2.0, -3.5, -1.0], stroke_width: 0.1, fill: 'solid' },
         // Cmts.User pin 1 mark (small cross)
         { type: 'line', id: 'cmts-x1', layer: 'Cmts.User', x: -3.0, y: -1.905, x2: -3.3, y2: -1.6, stroke_width: 0.05 },
         { type: 'line', id: 'cmts-x2', layer: 'Cmts.User', x: -3.3, y: -1.905, x2: -3.0, y2: -1.6, stroke_width: 0.05 },

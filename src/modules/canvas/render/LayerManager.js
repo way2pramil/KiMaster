@@ -7,6 +7,21 @@
  * @module LayerManager
  */
 
+/** KiCad file layer names → canonical display names used throughout KiMaster. */
+const LAYER_ALIASES = {
+  'F.CrtYd':  'F.Courtyard',
+  'B.CrtYd':  'B.Courtyard',
+  'Dwgs.User': 'User.Drawings',
+};
+
+/**
+ * Normalize a KiCad file layer name to the canonical display name.
+ * Passes through names that have no alias.
+ */
+export function normalizeLayer(name) {
+  return LAYER_ALIASES[name] ?? name;
+}
+
 /** KiCad layer ID → hex color (KiCad dark-theme defaults). */
 export const LAYER_COLORS = {
   'F.Cu':        0xb73333,
