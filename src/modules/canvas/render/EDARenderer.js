@@ -14,6 +14,7 @@ export class EDARenderer {
   #textLayers = new Map();
   #selGfx;
   #elements   = [];
+  #elementMap = new Map();
   #dirty      = new Set();
   #visibleLayers;
   #rafId      = null;
@@ -32,6 +33,8 @@ export class EDARenderer {
 
   load(elements) {
     this.#elements = elements;
+    this.#elementMap.clear();
+    for (const el of elements) this.#elementMap.set(el.id, el);
     this._clearAllGraphics();
     this._buildLayers();
     this.markDirty('all');
@@ -59,7 +62,7 @@ export class EDARenderer {
     const halo = Math.max(0.06, 2.0 / this.#scale);
 
     for (const id of selectedIds) {
-      const el = this.#elements.find(e => e.id === id);
+      const el = this.#elementMap.get(id);
       if (!el) continue;
       this._drawSelectionHalo(this.#selGfx, el, halo);
     }

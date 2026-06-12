@@ -91,6 +91,20 @@ export class SpatialLayer {
     return best;
   }
 
+  hitTestAll(worldX, worldY, toleranceWorld) {
+    const results = [];
+    for (const { element } of this.#items.values()) {
+      if (!this._isSelectable(element)) continue;
+      const b = this.elementAABB(element);
+      if (worldX < b.minX - toleranceWorld || worldX > b.maxX + toleranceWorld ||
+          worldY < b.minY - toleranceWorld || worldY > b.maxY + toleranceWorld) continue;
+      const d = this._distanceToElement(element, worldX, worldY);
+      if (d < toleranceWorld) results.push({ element, dist: d });
+    }
+    results.sort((a, b) => a.dist - b.dist);
+    return results.map(r => r.element);
+  }
+
   lineEndpointHitTest(worldX, worldY, toleranceWorld) {
     for (const { element } of this.#items.values()) {
       if (element.type !== 'line') continue;

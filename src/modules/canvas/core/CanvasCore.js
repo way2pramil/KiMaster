@@ -116,7 +116,7 @@ export class CanvasCore {
     this.#undo?.clear();
     this.#selection?.clear();
     this.#controlPoints?.hide();
-    if (valid.length) this.#vpHelper?.fitElements(valid);
+    if (valid.length) this.#vpHelper?.fitElements(valid, 5, false);
   }
 
   setTool(id) {
@@ -196,6 +196,7 @@ export class CanvasCore {
     });
     vp.on('moved', () => {
       this.#spatial.cullToViewport(this.#vpHelper.worldBounds);
+      this.#hover?.hide();
     });
 
     this.#unsubs.push(
@@ -211,21 +212,26 @@ export class CanvasCore {
     this.setTool('select');
 
     vp.on('pointerdown', (e) => this._dispatch('pointerdown', e));
-    vp.on('pointermove', (e) => this._dispatch('pointermove', e));
+    vp.on('pointermove', (e) => {
+      this._dispatch('pointermove', e);
+      const world = vp.toWorld(e.global.x, e.global.y);
+      store.canvasCursorWorld = { x: world.x, y: world.y };
+    });
     vp.on('pointerup',   (e) => this._dispatch('pointerup',   e));
 
     app.canvas.addEventListener('pointerleave', (e) => {
       this.#activeTool?.onPointerLeave(e);
     });
 
+    app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
     app.canvas.addEventListener('dblclick', (e) => {
       const rect = app.canvas.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
       const world = vp.toWorld(sx, sy);
-      const scale = vp.scaled;
-      const newScale = scale * 2;
-      vp.animate({ position: world, scale: newScale, time: 200 });
+      const newScale = vp.scaled * (e.shiftKey ? 0.5 : 2);
+      vp.animate({ position: world, scale: newScale, time: 250, ease: 'easeInOutSine' });
     });
 
     this._onKeyDown = this._handleKeyDown.bind(this);
@@ -246,9 +252,11 @@ export class CanvasCore {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
       return;
     }
-    if (e.key === 'Home') {
+    if (e.key === 'Home' || ((e.ctrlKey || e.metaKey) && e.key === '0')) {
+      e.preventDefault();
       const els = store.canvasElements;
       if (els?.length) this.#vpHelper.fitElements(els);
+      else this.#vpHelper.resetZoom();
     }
     if (e.key === '1' && !e.ctrlKey && !e.metaKey) {
       this.#vpHelper.resetZoom();

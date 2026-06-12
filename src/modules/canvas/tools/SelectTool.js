@@ -5,6 +5,7 @@ const DRAG_THRESHOLD_PX = 4;
 const HIT_TOLERANCE_PX  = 10;
 const NUDGE_SMALL       = 0.1;
 const NUDGE_LARGE       = 1.0;
+let _idCounter          = 0;
 
 export class SelectTool extends ToolBase {
   static id = 'select';
@@ -20,6 +21,8 @@ export class SelectTool extends ToolBase {
   #cpElement      = null;
   #cpOriginal     = null;
   #cpStartBounds  = null;
+  #lastNudgeTime  = 0;
+  #lastOverlapIdx = -1;
 
   onActivate() {
     this.#state = 'idle';
@@ -105,7 +108,7 @@ export class SelectTool extends ToolBase {
     }
 
     if (this.#state === 'grabbing') {
-      this._applyElementMove(world, noSnap);
+      this._applyElementMove(world, noSnap, data?.shiftKey);
       return;
     }
 
@@ -129,9 +132,10 @@ export class SelectTool extends ToolBase {
       if (!pastThreshold) return;
       this.#state = 'dragging-elements';
       this.ctx.controlPoints?.hide();
+      this._updateCursor(world, scale);
     }
     if (this.#state === 'dragging-elements') {
-      this._applyElementMove(world, noSnap);
+      this._applyElementMove(world, noSnap, data?.shiftKey);
       return;
     }
 
@@ -139,6 +143,7 @@ export class SelectTool extends ToolBase {
     if (this.#state === 'pressed-empty') {
       if (!pastThreshold) return;
       this.#state = 'dragging-marquee';
+      this._updateCursor(world, scale);
     }
     if (this.#state === 'dragging-marquee') {
       this.ctx.marquee.update(world.x, world.y);
@@ -227,6 +232,9 @@ export class SelectTool extends ToolBase {
     if (e.key === 'Escape') {
       this.ctx.selection.clear();
       this.ctx.controlPoints?.hide();
+      this.ctx.hover?.hide();
+      const canvas = this.ctx.viewport.options?.events?.domElement;
+      if (canvas) canvas.style.cursor = 'default';
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
@@ -262,6 +270,32 @@ export class SelectTool extends ToolBase {
       return;
     }
 
+    // +/- zoom
+    if (e.key === '=' || e.key === '+') {
+      e.preventDefault();
+      this.ctx.vpHelper?.zoomTo(this.ctx.viewport.scaled * 1.5);
+      return;
+    }
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      this.ctx.vpHelper?.zoomTo(this.ctx.viewport.scaled / 1.5);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+      e.preventDefault();
+      const els = store.canvasElements;
+      if (els?.length) this.ctx.vpHelper?.fitElements(els);
+      else this.ctx.vpHelper?.resetZoom();
+      return;
+    }
+
+    // Tab = cycle selection among overlapping elements at last click position
+    if (e.key === 'Tab' && this.#state === 'idle') {
+      e.preventDefault();
+      this._cycleOverlapping();
+      return;
+    }
+
     // KiCad shortcuts — idle with selection, no modifier
     if (this.#state === 'idle' && !e.ctrlKey && !e.metaKey) {
       if (e.key === 'r' || e.key === 'R') {
@@ -284,9 +318,15 @@ export class SelectTool extends ToolBase {
 
   // ── Element move (shared between drag and grab) ───────────────────────────
 
-  _applyElementMove(world, noSnap) {
-    const rawDx = world.x - this.#pressWorld.x;
-    const rawDy = world.y - this.#pressWorld.y;
+  _applyElementMove(world, noSnap, shiftKey) {
+    let rawDx = world.x - this.#pressWorld.x;
+    let rawDy = world.y - this.#pressWorld.y;
+
+    // Shift = axis-lock (constrain to horizontal or vertical)
+    if (shiftKey) {
+      if (Math.abs(rawDx) > Math.abs(rawDy)) rawDy = 0;
+      else rawDx = 0;
+    }
 
     let dx = rawDx, dy = rawDy;
     if (!noSnap && this.ctx.grid) {
@@ -585,8 +625,7 @@ export class SelectTool extends ToolBase {
     if (hit && !store.canvasSelectedIds.has(hit.id)) {
       if (this.ctx.hover.currentId !== hit.id) {
         this.ctx.hover.currentId = hit.id;
-        const bb = this.ctx.spatial.elementAABB(hit);
-        this.ctx.hover.show(bb, scale);
+        this.ctx.hover.showForElement(hit, scale);
       }
     } else {
       if (this.ctx.hover.currentId) this.ctx.hover.hide();
@@ -596,6 +635,15 @@ export class SelectTool extends ToolBase {
   _updateCursor(world, scale) {
     const canvas = this.ctx.viewport.options?.events?.domElement;
     if (!canvas) return;
+
+    if (this.#state === 'dragging-elements' || this.#state === 'grabbing') {
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+    if (this.#state === 'dragging-marquee') {
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
 
     if (this.ctx.controlPoints) {
       const cp = this.ctx.controlPoints.hitTest(world.x, world.y);
@@ -607,7 +655,11 @@ export class SelectTool extends ToolBase {
 
     const tolerance = HIT_TOLERANCE_PX / scale;
     const hit = this.ctx.spatial.hitTestPoint(world.x, world.y, tolerance);
-    canvas.style.cursor = hit ? 'move' : 'default';
+    if (hit) {
+      canvas.style.cursor = store.canvasSelectedIds.has(hit.id) ? 'grab' : 'pointer';
+    } else {
+      canvas.style.cursor = 'default';
+    }
   }
 
   // ── Control point display ──────────────────────────────────────────────────
@@ -675,7 +727,7 @@ export class SelectTool extends ToolBase {
     for (const id of ids) {
       const rec = this.ctx.spatial.get(id);
       if (!rec) continue;
-      const newId = `${id}_dup_${Date.now()}`;
+      const newId = `${id}_dup_${++_idCounter}`;
       const clone = { ...structuredClone(rec.element), id: newId, x: rec.element.x + offset, y: rec.element.y + offset };
       if (clone.x2 != null) clone.x2 += offset;
       if (clone.y2 != null) clone.y2 += offset;
@@ -707,7 +759,7 @@ export class SelectTool extends ToolBase {
     const mutations = [...store.canvasMutations];
     const newIds = new Set();
     for (const el of clipboard) {
-      const newId = `${el.id}_paste_${Date.now()}`;
+      const newId = `${el.id}_paste_${++_idCounter}`;
       const clone = { ...structuredClone(el), id: newId, x: el.x + offset, y: el.y + offset };
       if (clone.x2 != null) clone.x2 += offset;
       if (clone.y2 != null) clone.y2 += offset;
@@ -731,7 +783,12 @@ export class SelectTool extends ToolBase {
       case 'ArrowLeft':  ndx = -step; break;
       case 'ArrowRight': ndx =  step; break;
     }
-    this.ctx.undo?.snapshot();
+    // Coalesce rapid nudges into one undo entry (within 500ms)
+    const now = performance.now();
+    if (now - this.#lastNudgeTime > 500) {
+      this.ctx.undo?.snapshot();
+    }
+    this.#lastNudgeTime = now;
     const mutations = [...store.canvasMutations];
     for (const id of ids) {
       const rec = this.ctx.spatial.get(id);
@@ -752,6 +809,22 @@ export class SelectTool extends ToolBase {
     store.canvasIsDirty   = true;
     this.ctx.renderer.markDirty('all');
     this._showControlPoints(this.ctx.viewport.scaled);
+  }
+
+  _cycleOverlapping() {
+    const scale = this.ctx.viewport.scaled;
+    const tolerance = HIT_TOLERANCE_PX / scale;
+    // Use last press position to find overlapping elements
+    const { x, y } = this.#pressWorld;
+    const hits = this.ctx.spatial.hitTestAll(x, y, tolerance);
+    if (hits.length < 2) return;
+    // Find current selection in the hit list and advance
+    const currentId = store.canvasSelectedIds.values().next().value;
+    const currentIdx = hits.findIndex(h => h.id === currentId);
+    const nextIdx = (currentIdx + 1) % hits.length;
+    this.#lastOverlapIdx = nextIdx;
+    this.ctx.selection.selectOne(hits[nextIdx].id);
+    this._showControlPoints(scale);
   }
 
   _reloadFromUndo(elements) {

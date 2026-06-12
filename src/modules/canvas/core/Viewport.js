@@ -36,7 +36,7 @@ export class ViewportHelper {
    * @param {object[]} elements EDAElement[]
    * @param {number} [paddingMm=5]
    */
-  fitElements(elements, paddingMm = 5) {
+  fitElements(elements, paddingMm = 5, animate = true) {
     if (!elements.length) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const el of elements) {
@@ -56,17 +56,25 @@ export class ViewportHelper {
     const scaleY = this.#vp.screenHeight / h;
     const s      = Math.min(scaleX, scaleY, 200);
 
-    this.#vp.setZoom(s, true);
-    this.#vp.moveCenter(cx, cy);
+    if (animate) {
+      this.#vp.animate({ position: { x: cx, y: cy }, scale: s, time: 300, ease: 'easeInOutSine' });
+    } else {
+      this.#vp.setZoom(s, true);
+      this.#vp.moveCenter(cx, cy);
+    }
   }
 
-  resetZoom() {
-    this.#vp.setZoom(1, true);
+  resetZoom(animate = true) {
+    if (animate) {
+      this.#vp.animate({ scale: 1, time: 200, ease: 'easeInOutSine' });
+    } else {
+      this.#vp.setZoom(1, true);
+    }
   }
 
   zoomTo(scale, animate = true) {
     if (animate) {
-      this.#vp.animate({ scale, time: 200 });
+      this.#vp.animate({ scale, time: 200, ease: 'easeInOutSine' });
     } else {
       this.#vp.setZoom(scale, true);
     }

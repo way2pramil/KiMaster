@@ -30,10 +30,10 @@ const MIL_DOT_SIZES = [
 
 const DOT_COLOR       = 0x404040;
 const DOT_SCREEN_PX   = 1.2;
-const SUB_DIVISIONS   = 10;
-const SUB_DOT_COLOR   = 0x333333;
-const SUB_DOT_PX      = 0.8;
-const SUB_MIN_SCREEN  = 6;
+const MINOR_DOT_COLOR = 0x333333;
+const MINOR_DOT_PX    = 0.8;
+const MINOR_MIN_PX    = 2;
+const MINOR_DIVISOR   = 10;
 const MAX_DOTS        = 60000;
 const ORIGIN_COLOR    = 0x666666;
 const ORIGIN_LENGTH   = 2.0;
@@ -87,7 +87,9 @@ export class Grid {
     const scale = vp.scaled;
 
     const sizes = this.#unit === 'mil' ? MIL_DOT_SIZES : MM_DOT_SIZES;
-    this.#autoSpacing = sizes.find(d => scale >= d.minScale)?.spacing ?? sizes[sizes.length - 1].spacing;
+    const majorIdx = sizes.findIndex(d => scale >= d.minScale);
+    const majorEntry = sizes[majorIdx >= 0 ? majorIdx : sizes.length - 1];
+    this.#autoSpacing = majorEntry.spacing;
 
     let spacing = this.#spacing ?? this.#autoSpacing;
 
@@ -107,7 +109,12 @@ export class Grid {
     const startX = Math.floor(corner.x / spacing) * spacing;
     const startY = Math.floor(corner.y / spacing) * spacing;
 
-    const key = `${spacing.toFixed(6)}|${startX.toFixed(4)}|${startY.toFixed(4)}|${countX}|${countY}|${scale.toFixed(4)}`;
+    // Minor grid: 10x10 subdivision of major spacing (KiCad style)
+    const minorSpacing = spacing / MINOR_DIVISOR;
+    const minorScreen  = minorSpacing * scale;
+    const showMinor    = minorScreen >= MINOR_MIN_PX;
+
+    const key = `${spacing.toFixed(6)}|${startX.toFixed(4)}|${startY.toFixed(4)}|${countX}|${countY}|${scale.toFixed(4)}|${showMinor}`;
     if (key === this.#lastDrawnKey) return;
     this.#lastDrawnKey = key;
 
@@ -116,21 +123,27 @@ export class Grid {
     const screenSpacing = spacing * scale;
     if (countX < 1 || countY < 1 || screenSpacing < 4) return;
 
-    // Subdivision dots (10x10 within each major cell)
-    const subSpacing = spacing / SUB_DIVISIONS;
-    const subScreen  = subSpacing * scale;
-    if (subScreen >= SUB_MIN_SCREEN) {
-      const subR = SUB_DOT_PX / scale;
-      const subCountX = (countX + 2) * SUB_DIVISIONS;
-      const subCountY = (countY + 2) * SUB_DIVISIONS;
-      if (subCountX * subCountY <= MAX_DOTS) {
-        for (let ix = 0; ix < subCountX; ix++) {
-          for (let iy = 0; iy < subCountY; iy++) {
-            if (ix % SUB_DIVISIONS === 0 && iy % SUB_DIVISIONS === 0) continue;
-            this.#g.circle(startX + ix * subSpacing, startY + iy * subSpacing, subR);
+    // Minor grid dots (10x10 subdivisions)
+    if (showMinor) {
+      const minorR = MINOR_DOT_PX / scale;
+      const mStartX = Math.floor(corner.x / minorSpacing) * minorSpacing;
+      const mStartY = Math.floor(corner.y / minorSpacing) * minorSpacing;
+      const mCountX = Math.ceil(viewW / minorSpacing);
+      const mCountY = Math.ceil(viewH / minorSpacing);
+
+      if (mCountX * mCountY <= MAX_DOTS) {
+        for (let ix = 0; ix <= mCountX + 1; ix++) {
+          const wx = mStartX + ix * minorSpacing;
+          const onMajorX = Math.abs(wx / spacing - Math.round(wx / spacing)) < 0.01;
+          for (let iy = 0; iy <= mCountY + 1; iy++) {
+            if (onMajorX) {
+              const wy = mStartY + iy * minorSpacing;
+              if (Math.abs(wy / spacing - Math.round(wy / spacing)) < 0.01) continue;
+            }
+            this.#g.circle(wx, mStartY + iy * minorSpacing, minorR);
           }
         }
-        this.#g.fill({ color: SUB_DOT_COLOR, alpha: 0.35 });
+        this.#g.fill({ color: MINOR_DOT_COLOR, alpha: 0.35 });
       }
     }
 

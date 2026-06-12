@@ -57,6 +57,25 @@ TEMPLATE.innerHTML = `
     z-index: 10;
     pointer-events: none;
   }
+  .zoom-badge {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    font-family: var(--km-font-mono);
+    font-size: 10px;
+    color: var(--km-text-muted);
+    background: rgba(30,30,30,0.7);
+    padding: 2px 8px;
+    border-radius: 4px;
+    z-index: 10;
+    pointer-events: auto;
+    cursor: pointer;
+    user-select: none;
+  }
+  .zoom-badge:hover {
+    color: var(--km-text);
+    background: rgba(50,50,50,0.9);
+  }
   .dirty-dot {
     display: inline-block;
     width: 6px; height: 6px;
@@ -75,6 +94,8 @@ TEMPLATE.innerHTML = `
 <km-layer-panel></km-layer-panel>
 <km-pad-properties></km-pad-properties>
 <div class="status-bar" id="status-bar">No file open</div>
+<div class="zoom-badge" id="zoom-badge" title="Click to fit view">100%</div>
+<div class="status-bar" id="coords-bar" style="left:auto;right:80px;text-align:right;pointer-events:none;">X: 0.000  Y: 0.000</div>
 `;
 
 export class FootprintEditor extends HTMLElement {
@@ -98,6 +119,7 @@ export class FootprintEditor extends HTMLElement {
       if (!this.#loaded) {
         this._loadMock();
       }
+      this._wireZoomBadge();
     });
 
     // Ctrl+S
@@ -109,10 +131,13 @@ export class FootprintEditor extends HTMLElement {
     };
     window.addEventListener('keydown', this.#onKey);
 
-    // Dirty indicator
+    // Dirty indicator + coords + selection count
     this.#unsubs.push(
       import('../../../core/State.js').then(({ subscribe: sub }) => {
-        return sub('canvasIsDirty', (dirty) => this._updateStatusBar(dirty));
+        const u1 = sub('canvasIsDirty', (dirty) => this._updateStatusBar(dirty));
+        const u2 = sub('canvasCursorWorld', (pt) => this._updateCoords(pt));
+        const u3 = sub('canvasSelectedIds', (ids) => this._updateSelectionCount(ids));
+        return () => { u1(); u2(); u3(); };
       }),
     );
   }
@@ -125,6 +150,23 @@ export class FootprintEditor extends HTMLElement {
   }
 
   // ── Internal ────────────────────────────────────────────────────────────────
+
+  _wireZoomBadge() {
+    const badge = this.shadowRoot?.getElementById('zoom-badge');
+    if (!badge || !this.#core?.viewport) return;
+    const vp = this.#core.viewport;
+    const update = () => {
+      badge.textContent = `${Math.round(vp.scaled * 100)}%`;
+    };
+    vp.on('zoomed', update);
+    vp.on('moved', update);
+    update();
+    badge.addEventListener('click', () => {
+      const els = store.canvasElements;
+      if (els?.length) this.#core?.vpHelper?.fitElements(els);
+      else this.#core?.vpHelper?.resetZoom();
+    });
+  }
 
   _wireButtons() {
     const root = this.shadowRoot;
@@ -195,6 +237,24 @@ export class FootprintEditor extends HTMLElement {
       ? `<span class="dirty-dot"></span>${_esc(name)} — unsaved changes`
       : _esc(name);
     this._setSaveEnabled(dirty);
+  }
+
+  _updateCoords(pt) {
+    const bar = this.shadowRoot?.getElementById('coords-bar');
+    if (!bar || !pt) return;
+    bar.textContent = `X: ${pt.x.toFixed(3)}  Y: ${pt.y.toFixed(3)}`;
+  }
+
+  _updateSelectionCount(ids) {
+    const bar = this.shadowRoot?.getElementById('status-bar');
+    if (!bar) return;
+    const name = store.canvasOriginalPath.split(/[/\\]/).pop() || 'No file open';
+    const dirty = store.canvasIsDirty;
+    let text = dirty
+      ? `<span class="dirty-dot"></span>${_esc(name)} — unsaved`
+      : _esc(name);
+    if (ids?.size > 0) text += ` · ${ids.size} selected`;
+    bar.innerHTML = text;
   }
 
   _setSaveEnabled(enabled) {
