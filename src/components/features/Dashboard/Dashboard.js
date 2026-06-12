@@ -34,6 +34,7 @@ import './widgets/WidgetNetlistGraph.js';
 import './widgets/WidgetNotes.js';
 import './widgets/WidgetBoardRender.js';
 import './widgets/WidgetShortcuts.js';
+import { SDK_HELLO_TAG } from './widgets/WidgetSdkHello.js';
 
 // ── Widget registry ───────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ const WIDGETS = {
   'shortcuts':       { label:'Shortcuts',       icon:'grid',        tag:'km-wgt-shortcuts',        defaultW: 6, defaultH: 1 },
   'notes':           { label:'Notes',           icon:'notes',       tag:'km-wgt-notes',            defaultW: 3, defaultH: 1 },
   'board-render':    { label:'3D render',       icon:'render',      tag:'km-wgt-board-render',     defaultW: 3, defaultH: 2 },
+  'sdk-hello':       { label:'SDK Hello',       icon:'box',         tag: SDK_HELLO_TAG,            defaultW: 3, defaultH: 1 },
 };
 
 const DEFAULT_LAYOUT = [
@@ -53,6 +55,7 @@ const DEFAULT_LAYOUT = [
   { id: 'board-info',    w: 6, h: 1 },
   { id: 'shortcuts',     w: 3, h: 1 },
   { id: 'notes',         w: 3, h: 1 },
+  { id: 'sdk-hello',     w: 3, h: 1 },
 ];
 
 // ── Template ──────────────────────────────────────────────────────────────────
@@ -235,7 +238,7 @@ T.innerHTML = /* html */`
   .grid-wrap { padding: 16px 20px 20px; }
   .grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(12, 1fr);
     grid-auto-rows: minmax(220px, auto);
     gap: 14px;
   }
@@ -696,10 +699,11 @@ export class KmDashboard extends HTMLElement {
   // ── Layout persistence (delegates to LayoutStore) ─────────────
 
   /**
-   * Per-render cache of the layout, augmented with the legacy colSpan /
-   * rowSpan fields the current 4-col grid renderer uses. Rebuilt at the
-   * top of `_renderGrid()` from the LayoutStore. Never mutated directly;
-   * layout changes go through the store helpers and then call `_renderGrid`.
+   * Per-render cache of the layout. The grid is 12-col (v3 native); entries
+   * carry `w`/`h` for size, plus a derived `colSpan` mirror (1-4) for legacy
+   * resize math. Rebuilt at the top of `_renderGrid()` from the LayoutStore.
+   * Never mutated directly; layout changes go through the store helpers and
+   * then call `_renderGrid`.
    * @returns {Array<{id:string,w:number,h:number,colSpan:number,rowSpan:number}>}
    */
   _readLayout() {
@@ -809,8 +813,11 @@ export class KmDashboard extends HTMLElement {
     this._layout.forEach((entry, idx) => {
       const def  = WIDGETS[entry.id];
       if (!def) return;
-      const cols = entry.colSpan || toLegacyColSpan(def.defaultW);
-      const rows = entry.rowSpan || toLegacyRowSpan(def.defaultH);
+      // Native 12-col grid (v3): use `w` directly. `colSpan` was the v2
+      // 1-4 mapping and is no longer needed — kept on entries for back-compat
+      // with resize-drag code that mutates `entry.colSpan`/`rowSpan` in place.
+      const cols = entry.w || def.defaultW;
+      const rows = entry.h || def.defaultH;
 
       const cell = document.createElement('div');
       cell.className = 'wgt-cell';
@@ -921,17 +928,18 @@ export class KmDashboard extends HTMLElement {
     const gridEl   = this.shadowRoot.getElementById('grid');
     const overlay  = cell.querySelector('.edit-overlay');
     const GAP      = 14;
-    const NUM_COLS = 4;
+    const NUM_COLS = 12; // native 12-col grid (v3)
+    const MAX_ROWS = 8;
 
     const gridRect = gridEl.getBoundingClientRect();
     const colW     = (gridRect.width - (NUM_COLS - 1) * GAP) / NUM_COLS;
     const cellRect = cell.getBoundingClientRect();
-    const rowH     = cellRect.height / Math.max(entry.rowSpan || 1, 1);
+    const rowH     = cellRect.height / Math.max(entry.h || entry.rowSpan || 1, 1);
 
     const startX   = e.clientX;
     const startY   = e.clientY;
-    const startCol = entry.colSpan || 1;
-    const startRow = entry.rowSpan || 1;
+    const startCol = entry.w || entry.colSpan || 1;
+    const startRow = entry.h || entry.rowSpan || 1;
 
     // Live size indicator badge
     const badge = document.createElement('div');
@@ -963,14 +971,15 @@ export class KmDashboard extends HTMLElement {
       }
       if (dir === 's' || dir === 'se') {
         newRow = Math.round(startRow + dy / (rowH + GAP));
-        newRow = Math.max(1, Math.min(4, newRow));
+        newRow = Math.max(1, Math.min(MAX_ROWS, newRow));
       }
 
-      entry.colSpan = newCol;
-      entry.rowSpan = newRow;
-      // Map legacy 4-col span back to v3 12-col width/height for persistence.
-      entry.w = newCol * 3;
+      entry.w = newCol;
       entry.h = newRow;
+      // Mirror back into legacy fields so the rest of the resize/render code
+      // (which inspects colSpan/rowSpan) keeps working.
+      entry.colSpan = Math.max(1, Math.min(4, Math.round(newCol / 3)));
+      entry.rowSpan = newRow;
       cell.style.gridColumn = `span ${newCol}`;
       cell.style.gridRow    = `span ${newRow}`;
 
@@ -1211,8 +1220,8 @@ export class KmDashboard extends HTMLElement {
     const e = cur[i];
     const wMax = 12, hMax = 8;
     const inc = (step) => {
-      if (act === 'grow-w')    e.w = Math.min(wMax, e.w + 3);
-      if (act === 'shrink-w')  e.w = Math.max(3,  e.w - 3);
+      if (act === 'grow-w')    e.w = Math.min(wMax, e.w + 1);
+      if (act === 'shrink-w')  e.w = Math.max(1,  e.w - 1);
       if (act === 'grow-h')    e.h = Math.min(hMax, e.h + 1);
       if (act === 'shrink-h')  e.h = Math.max(1,  e.h - 1);
     };
