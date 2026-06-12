@@ -435,8 +435,25 @@ const GLOBAL_KEYMAP = [
   { key: '?', shift: true, label: 'Show shortcut sheet',           run: () => toggleShortcutSheet() },
   { key: 'd', label: 'Toggle density (compact / cozy / comfortable)', run: () => cycleDensity() },
   { key: 't', label: 'Toggle theme (dark / light)',                run: () => toggleTheme() },
-  { key: '.', meta: true, label: 'Open widget picker',            run: () => notify({ type: 'info', message: 'Widget picker is not yet implemented — see DASHBOARD_V3_PLAN §3.4', duration: 2500 }) },
+  { key: 'k', meta: true, label: 'Open command palette',          run: () => openCommandPalette() },
+  { key: '.', meta: true, label: 'Open widget picker',            run: () => document.dispatchEvent(new CustomEvent('km:open-widget-picker')) },
 ];
+
+/** Toggle the global command palette (km-command-palette). */
+function openCommandPalette() {
+  const palette = document.getElementById('command-palette');
+  if (!palette) return;
+  // Rebuild items so the latest bridge/project state is searchable
+  _buildPaletteItems(palette);
+  if (palette.hasAttribute('open')) {
+    palette.close?.();
+    palette.removeAttribute('open');
+  } else {
+    palette.show?.();
+    // Focus the search input after the open transition
+    setTimeout(() => palette.shadowRoot?.querySelector('.search')?.focus(), 50);
+  }
+}
 function setupGlobalKeymap() {
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.altKey) return;          // browser / Alt-drag territory

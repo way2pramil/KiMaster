@@ -703,6 +703,10 @@ export class KmDashboard extends HTMLElement {
       document.removeEventListener('keydown', this._onDocKey);
       this._onDocKey = null;
     }
+    if (this._onPickerEvent) {
+      document.removeEventListener('km:open-widget-picker', this._onPickerEvent);
+      this._onPickerEvent = null;
+    }
     this._closeContextMenu();
   }
 
@@ -1258,6 +1262,10 @@ export class KmDashboard extends HTMLElement {
         return;
       }
     });
+    // Listen for the global event dispatched by main.js when ⌘. is pressed
+    // outside the dashboard (e.g., from any other route).
+    this._onPickerEvent = () => this._togglePopover();
+    document.addEventListener('km:open-widget-picker', this._onPickerEvent);
   }
 }
 
