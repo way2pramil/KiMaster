@@ -7,6 +7,10 @@ import { MarqueeOverlay }   from '../selection/MarqueeOverlay.js';
 import { ControlPoints }    from '../selection/ControlPoints.js';
 import { HoverOverlay }     from '../selection/HoverOverlay.js';
 import { Grid }             from './Grid.js';
+import { Crosshair }        from './Crosshair.js';
+import { SnapIndicator }    from './SnapIndicator.js';
+import { AlignGuides }      from './AlignGuides.js';
+import { DragMeasure }      from './DragMeasure.js';
 import { ViewportHelper }   from './Viewport.js';
 import { UndoManager }      from './UndoManager.js';
 import { SelectTool }       from '../tools/SelectTool.js';
@@ -30,6 +34,10 @@ export class CanvasCore {
   #selection  = null;
   #marquee    = null;
   #grid       = null;
+  #crosshair  = null;
+  #snapIndicator = null;
+  #alignGuides   = null;
+  #dragMeasure   = null;
   #vpHelper   = null;
   #controlPoints = null;
   #hover      = null;
@@ -138,6 +146,10 @@ export class CanvasCore {
   get controlPoints() { return this.#controlPoints; }
   get hover()        { return this.#hover; }
   get undo()         { return this.#undo; }
+  get crosshair()    { return this.#crosshair; }
+  get snapIndicator() { return this.#snapIndicator; }
+  get alignGuides()  { return this.#alignGuides; }
+  get dragMeasure()  { return this.#dragMeasure; }
 
   async _init(container) {
     const app = new Application();
@@ -186,6 +198,10 @@ export class CanvasCore {
     this.#controlPoints = new ControlPoints(scene);
     this.#hover        = new HoverOverlay(scene);
     this.#grid         = new Grid(scene, vp);
+    this.#crosshair    = new Crosshair(scene, vp);
+    this.#snapIndicator = new SnapIndicator(scene, vp);
+    this.#alignGuides  = new AlignGuides(scene, vp, this.#spatial);
+    this.#dragMeasure  = new DragMeasure(scene, vp);
     this.#undo         = new UndoManager();
 
     vp.on('zoomed', () => {

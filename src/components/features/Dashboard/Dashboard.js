@@ -25,6 +25,9 @@ import {
   toLegacyColSpan,
   toLegacyRowSpan,
 } from './layout/LayoutStore.js';
+import { GridGeometry }                from './layout/GridEngine.js';
+import { attachResize }                from './layout/ResizeController.js';
+import { attachDrag }                  from './layout/DragController.js';
 
 // ── Widget imports (register all custom elements) ─────────────────────────────
 import './widgets/WidgetProjectFiles.js';
@@ -652,9 +655,10 @@ export class KmDashboard extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.appendChild(T.content.cloneNode(true));
-    this._unsubs   = [];
-    this._editMode = false;
-    this._dragId   = null;
+    this._unsubs       = [];
+    this._editMode     = false;
+    this._dragId       = null;
+    this._interactions = new Map(); // cellId → [dispose fns] for resize/drag
 
     // One-time init: hand the LayoutStore the list of known widget ids
     // and copy the persisted (or migrated) layout into the global store.
@@ -804,9 +808,21 @@ export class KmDashboard extends HTMLElement {
 
   // ── Grid ──────────────────────────────────────────────────────
 
+  _disposeInteractions() {
+    for (const fns of this._interactions.values()) {
+      for (const dispose of fns) try { dispose(); } catch {}
+    }
+    this._interactions.clear();
+  }
+
   _renderGrid() {
     const grid = this.shadowRoot.getElementById('grid');
+    this._disposeInteractions();
     grid.innerHTML = '';
+
+    // Build a fresh geometry bound to the live grid element. Used by both
+    // the resize and drag controllers.
+    this._geometry = new GridGeometry(grid);
 
     this._layout = this._readLayout();
 
@@ -860,36 +876,64 @@ export class KmDashboard extends HTMLElement {
       overlay.appendChild(rm);
 
       // ── Drag-resize handles (right edge, bottom edge, SE corner) ──
+      // Wired through ResizeController; the controller owns the pointer
+      // gesture and the floating size badge, the dashboard owns the
+      // commit-back to the LayoutStore.
+      const disposers = [];
+
       const rE = document.createElement('div');
       rE.className = 'resize-e';
       rE.title = 'Drag to resize width';
       rE.innerHTML = `<div class="resize-e-bar"></div>`;
-      rE.addEventListener('mousedown', e => this._startResize(e, cell, entry, 'e'));
       overlay.appendChild(rE);
+      disposers.push(attachResize(rE, {
+        dir: 'e', geometry: this._geometry, cellEl: cell, entry,
+        onDelta: ({ cols, rows }) => this._applyResize(entry, cell, cols, rows),
+        onCommit: () => this._saveLayout(),
+      }));
 
       const rS = document.createElement('div');
       rS.className = 'resize-s';
       rS.title = 'Drag to resize height';
       rS.innerHTML = `<div class="resize-s-bar"></div>`;
-      rS.addEventListener('mousedown', e => this._startResize(e, cell, entry, 's'));
       overlay.appendChild(rS);
+      disposers.push(attachResize(rS, {
+        dir: 's', geometry: this._geometry, cellEl: cell, entry,
+        onDelta: ({ cols, rows }) => this._applyResize(entry, cell, cols, rows),
+        onCommit: () => this._saveLayout(),
+      }));
 
       const rSE = document.createElement('div');
       rSE.className = 'resize-se';
       rSE.title = 'Drag to resize';
       rSE.innerHTML = `<div class="resize-se-dot"></div>`;
-      rSE.addEventListener('mousedown', e => this._startResize(e, cell, entry, 'se'));
       overlay.appendChild(rSE);
+      disposers.push(attachResize(rSE, {
+        dir: 'se', geometry: this._geometry, cellEl: cell, entry,
+        onDelta: ({ cols, rows }) => this._applyResize(entry, cell, cols, rows),
+        onCommit: () => this._saveLayout(),
+      }));
+
+      this._interactions.set(entry.id, disposers);
 
       cell.appendChild(overlay);
 
       // ── Move via mousedown (no HTML5 DnD — unreliable in Shadow DOM) ──
       // Mousedown anywhere on overlay except resize handles and remove button
-      overlay.addEventListener('mousedown', e => {
-        if (e.target.closest('.resize-e, .resize-s, .resize-se, .cell-rm')) return;
-        if (!this._editMode) return;
-        this._startMove(e, cell, entry);
-      });
+      // ── Move via DragController ───────────────────────────────────
+      // Wired through DragController; the controller owns the ghost, the
+      // drag-over highlight, and the hit-test. The dashboard decides
+      // what to do with the drop (reorder the layout).
+      const existing = this._interactions.get(entry.id) ?? [];
+      existing.push(attachDrag(cell, {
+        id: entry.id,
+        geometry: this._geometry,
+        sourceEl: cell,
+        shouldStart: () => this._editMode,
+        getCells: () => [...this.shadowRoot.querySelectorAll('.wgt-cell')],
+        onDrop: ({ targetId }) => this._commitDrop(entry.id, targetId),
+      }));
+      this._interactions.set(entry.id, existing);
 
       // Right-click context menu (always available, not just in edit mode)
       cell.addEventListener('contextmenu', e => this._openContextMenu(e, entry));
@@ -919,168 +963,42 @@ export class KmDashboard extends HTMLElement {
     }
   }
 
-  // ── Resize (edge/corner drag) ─────────────────────────────────
+  // ── Resize / move callbacks (called by ResizeController / DragController) ─
 
-  _startResize(e, cell, entry, dir) {
-    e.stopPropagation();
-    e.preventDefault();
-
-    const gridEl   = this.shadowRoot.getElementById('grid');
-    const overlay  = cell.querySelector('.edit-overlay');
-    const GAP      = 14;
-    const NUM_COLS = 12; // native 12-col grid (v3)
-    const MAX_ROWS = 8;
-
-    const gridRect = gridEl.getBoundingClientRect();
-    const colW     = (gridRect.width - (NUM_COLS - 1) * GAP) / NUM_COLS;
-    const cellRect = cell.getBoundingClientRect();
-    const rowH     = cellRect.height / Math.max(entry.h || entry.rowSpan || 1, 1);
-
-    const startX   = e.clientX;
-    const startY   = e.clientY;
-    const startCol = entry.w || entry.colSpan || 1;
-    const startRow = entry.h || entry.rowSpan || 1;
-
-    // Live size indicator badge
-    const badge = document.createElement('div');
-    badge.style.cssText = `
-      position:fixed; z-index:9999; pointer-events:none;
-      background:var(--km-shadow-backdrop); backdrop-filter:blur(8px);
-      border:1px solid rgba(37,99,235,0.5); border-radius:6px;
-      padding:4px 9px; font-size:11px; font-weight:600;
-      color:var(--km-accent-hover); font-family:var(--km-font);
-      font-variant-numeric:tabular-nums; white-space:nowrap;
-    `;
-    badge.textContent = `${startCol} × ${startRow}`;
-    document.body.appendChild(badge);
-
-    overlay?.classList.add('resizing');
-    document.body.style.cursor     = dir === 'e' ? 'ew-resize' : dir === 's' ? 'ns-resize' : 'nwse-resize';
-    document.body.style.userSelect = 'none';
-
-    const onMove = (ev) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-
-      let newCol = startCol;
-      let newRow = startRow;
-
-      if (dir === 'e' || dir === 'se') {
-        newCol = Math.round(startCol + dx / (colW + GAP));
-        newCol = Math.max(1, Math.min(NUM_COLS, newCol));
-      }
-      if (dir === 's' || dir === 'se') {
-        newRow = Math.round(startRow + dy / (rowH + GAP));
-        newRow = Math.max(1, Math.min(MAX_ROWS, newRow));
-      }
-
-      entry.w = newCol;
-      entry.h = newRow;
-      // Mirror back into legacy fields so the rest of the resize/render code
-      // (which inspects colSpan/rowSpan) keeps working.
-      entry.colSpan = Math.max(1, Math.min(4, Math.round(newCol / 3)));
-      entry.rowSpan = newRow;
-      cell.style.gridColumn = `span ${newCol}`;
-      cell.style.gridRow    = `span ${newRow}`;
-
-      badge.textContent = `${newCol} × ${newRow}`;
-      badge.style.left = (ev.clientX + 14) + 'px';
-      badge.style.top  = (ev.clientY - 12) + 'px';
-    };
-
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-      badge.remove();
-      overlay?.classList.remove('resizing');
-      document.body.style.cursor     = '';
-      document.body.style.userSelect = '';
-      this._saveLayout();
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
+  /**
+   * Apply a snapped grid size to the in-memory entry + the live cell style.
+   * Mirrored to `colSpan`/`rowSpan` for any legacy code that still inspects
+   * those fields.
+   * @param {{w:number,h:number}} entry
+   * @param {HTMLElement} cell
+   * @param {number} cols
+   * @param {number} rows
+   */
+  _applyResize(entry, cell, cols, rows) {
+    entry.w = cols;
+    entry.h = rows;
+    entry.colSpan = Math.max(1, Math.min(4, Math.round(cols / 3)));
+    entry.rowSpan = rows;
+    cell.style.gridColumn = `span ${cols}`;
+    cell.style.gridRow    = `span ${rows}`;
   }
 
-  // ── Move (mousedown drag — no HTML5 DnD) ──────────────────────
-
-  _startMove(e, sourceCell, entry) {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const rect    = sourceCell.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
-    const offsetY = e.clientY - rect.top;
-
-    // Floating ghost card following the cursor
-    const ghost = document.createElement('div');
-    ghost.style.cssText = `
-      position:fixed; pointer-events:none; z-index:9998;
-      left:${rect.left}px; top:${rect.top}px;
-      width:${rect.width}px; height:${rect.height}px;
-      border-radius:18px;
-      border:2px dashed rgba(37,99,235,0.65);
-      background:rgba(37,99,235,0.07);
-      backdrop-filter:blur(6px);
-      box-shadow:0 12px 40px rgba(37,99,235,0.22);
-      transition:none;
-    `;
-    document.body.appendChild(ghost);
-
-    sourceCell.style.opacity = '0.3';
-    document.body.style.cursor     = 'grabbing';
-    document.body.style.userSelect = 'none';
-
-    let targetId = null;
-
-    const onMove = (ev) => {
-      ghost.style.left = (ev.clientX - offsetX) + 'px';
-      ghost.style.top  = (ev.clientY - offsetY) + 'px';
-
-      // Ghost centre point for hit-testing
-      const cx = ev.clientX - offsetX + rect.width  / 2;
-      const cy = ev.clientY - offsetY + rect.height / 2;
-
-      // Check bounding rects of all cells (works across Shadow DOM)
-      let found = null;
-      const cells = [...this.shadowRoot.querySelectorAll('.wgt-cell')];
-      for (const c of cells) {
-        if (c.dataset.id === entry.id) continue;
-        const r = c.getBoundingClientRect();
-        if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
-          found = c; break;
-        }
-      }
-
-      cells.forEach(c => c.classList.toggle('drag-over', c === found && !!found));
-      targetId = found?.dataset.id ?? null;
-    };
-
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-      ghost.remove();
-      sourceCell.style.opacity        = '';
-      document.body.style.cursor     = '';
-      document.body.style.userSelect = '';
-      this.shadowRoot.querySelectorAll('.wgt-cell').forEach(c =>
-        c.classList.remove('drag-over', 'dragging'));
-
-      if (targetId && targetId !== entry.id) {
-        const cur = getLayout();
-        const fi = cur.findIndex(x => x.id === entry.id);
-        const ti = cur.findIndex(x => x.id === targetId);
-        if (fi !== -1 && ti !== -1) {
-          const [item] = cur.splice(fi, 1);
-          cur.splice(ti, 0, item);
-          setLayout(cur);
-          this._renderGrid();
-        }
-      }
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
+  /**
+   * Commit a drag-reorder: swap the source and target in the layout, then
+   * re-render. No-op if either side is missing.
+   * @param {string} sourceId
+   * @param {string|null} targetId
+   */
+  _commitDrop(sourceId, targetId) {
+    if (!targetId || targetId === sourceId) return;
+    const cur = getLayout();
+    const fi = cur.findIndex(x => x.id === sourceId);
+    const ti = cur.findIndex(x => x.id === targetId);
+    if (fi === -1 || ti === -1) return;
+    const [item] = cur.splice(fi, 1);
+    cur.splice(ti, 0, item);
+    setLayout(cur);
+    this._renderGrid();
   }
 
   // ── Widget popover (anchored to FAB / +cell) ─────────────────
