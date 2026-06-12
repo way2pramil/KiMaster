@@ -42,14 +42,14 @@ import { SDK_HELLO_TAG } from './widgets/WidgetSdkHello.js';
 // ── Widget registry ───────────────────────────────────────────────────────────
 
 const WIDGETS = {
-  'project-files':   { label:'Project files',   icon:'folder-tree', tag:'km-wgt-project-files',    defaultW: 3, defaultH: 2 },
-  'recent-projects': { label:'Recent projects', icon:'clock',       tag:'km-wgt-recent-projects',  defaultW: 3, defaultH: 2 },
-  'board-info':      { label:'Board info',      icon:'cpu',         tag:'km-wgt-board-info',       defaultW: 3, defaultH: 2 },
-  'netlist-graph':   { label:'Netlist graph',   icon:'graph',       tag:'km-wgt-netlist-graph',    defaultW: 3, defaultH: 2 },
-  'shortcuts':       { label:'Shortcuts',       icon:'grid',        tag:'km-wgt-shortcuts',        defaultW: 6, defaultH: 1 },
-  'notes':           { label:'Notes',           icon:'notes',       tag:'km-wgt-notes',            defaultW: 3, defaultH: 1 },
-  'board-render':    { label:'3D render',       icon:'render',      tag:'km-wgt-board-render',     defaultW: 3, defaultH: 2 },
-  'sdk-hello':       { label:'SDK Hello',       icon:'box',         tag: SDK_HELLO_TAG,            defaultW: 3, defaultH: 1 },
+  'project-files':   { label:'Project files',   icon:'folder-tree', tag:'km-wgt-project-files',    defaultW: 3, defaultH: 2, desc:'Tree of the open project — schematic, PCB, docs.' },
+  'recent-projects': { label:'Recent projects', icon:'clock',       tag:'km-wgt-recent-projects',  defaultW: 3, defaultH: 2, desc:'Jump back into a project you opened recently.' },
+  'board-info':      { label:'Board info',      icon:'cpu',         tag:'km-wgt-board-info',       defaultW: 3, defaultH: 2, desc:'Size, layers, and live KiCad board summary.' },
+  'netlist-graph':   { label:'Netlist graph',   icon:'graph',       tag:'km-wgt-netlist-graph',    defaultW: 3, defaultH: 2, desc:'Bezier of every net — find short candidates at a glance.' },
+  'shortcuts':       { label:'Shortcuts',       icon:'grid',        tag:'km-wgt-shortcuts',        defaultW: 6, defaultH: 1, desc:'Key bindings you actually use, in one row.' },
+  'notes':           { label:'Notes',           icon:'notes',       tag:'km-wgt-notes',            defaultW: 3, defaultH: 1, desc:'Project-scoped scratchpad. Markdown-friendly.' },
+  'board-render':    { label:'3D render',       icon:'render',      tag:'km-wgt-board-render',     defaultW: 3, defaultH: 2, desc:'Live 3D preview of the current board.' },
+  'sdk-hello':       { label:'SDK Hello',       icon:'box',         tag: SDK_HELLO_TAG,            defaultW: 3, defaultH: 1, desc:'Hello-world widget that proves the SDK is wired up.' },
 };
 
 const DEFAULT_LAYOUT = [
@@ -403,20 +403,7 @@ T.innerHTML = /* html */`
     backdrop-filter: blur(1px);
   }
 
-  /* ── Add widget button ────────────────────────────────────────── */
-  .add-cell {
-    border: 1px dashed var(--km-alpha-08);
-    border-radius: 20px;
-    display: none; align-items: center; justify-content: center;
-    cursor: pointer; color: var(--km-alpha-20); font-size: 28px;
-    transition: all 0.15s; grid-column: span 2; min-height: 100px;
-  }
-  :host(.edit-mode) .add-cell { display: flex; }
-  .add-cell:hover {
-    border-color: rgba(37,99,235,0.35);
-    color: var(--km-accent-hover);
-    background: rgba(37,99,235,0.04);
-  }
+  /* ── Add widget button (the permanent FAB — see .fab) ─────────── */
 
   /* ── Floating action button (FAB) — permanent + to add widgets ── */
   .fab {
@@ -497,27 +484,39 @@ T.innerHTML = /* html */`
   .popover-search::placeholder { color: var(--km-alpha-30); }
   .popover-grid {
     flex: 1; overflow-y: auto; padding: 10px;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
   }
   .popover-item {
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    padding: 14px 8px; border-radius: 10px; cursor: pointer;
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 11px; border-radius: 10px; cursor: pointer;
     border: 1px solid transparent;
     background: none;
+    text-align: left;
     transition: all 0.12s;
     font: inherit; color: inherit;
+    min-width: 0;
   }
   .popover-item:hover {
     background: var(--km-accent-muted);
     border-color: var(--km-accent-border);
   }
-  .popover-item km-icon { color: var(--km-alpha-55); }
+  .popover-item km-icon { color: var(--km-alpha-55); flex-shrink: 0; margin-top: 1px; }
   .popover-item:hover km-icon { color: var(--km-accent-hover); }
-  .popover-item-label {
-    font-size: 10px; color: var(--km-alpha-45);
-    text-align: center; line-height: 1.3;
+  .popover-item-body {
+    display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1;
   }
-  .popover-item:hover .popover-item-label { color: var(--km-alpha-85); }
+  .popover-item-label {
+    font-size: 11px; font-weight: 500; color: var(--km-alpha-85);
+    line-height: 1.3;
+  }
+  .popover-item:hover .popover-item-label { color: var(--km-alpha-95); }
+  .popover-item-desc {
+    font-size: 10px; color: var(--km-alpha-30);
+    line-height: 1.35;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .popover-item:hover .popover-item-desc { color: var(--km-alpha-45); }
   .popover-item.added { opacity: 0.35; cursor: default; }
   .popover-item.added:hover { background: none; border-color: transparent; }
   .popover-item.added km-icon,
@@ -526,8 +525,15 @@ T.innerHTML = /* html */`
     grid-column: 1 / -1;
     padding: 28px 14px; text-align: center;
     font-size: 11px; color: var(--km-alpha-25);
+    line-height: 1.5;
   }
   .popover-empty b { color: var(--km-alpha-55); font-weight: 500; }
+  .popover-empty kbd {
+    display: inline-block; padding: 1px 5px;
+    background: var(--km-alpha-06); border: 1px solid var(--km-alpha-10);
+    border-radius: 4px; font-family: var(--km-font-mono);
+    font-size: 10px; color: var(--km-alpha-55);
+  }
 
   /* ── Right-click context menu ──────────────────────────────── */
   .ctx-menu {
@@ -940,14 +946,6 @@ export class KmDashboard extends HTMLElement {
 
       grid.appendChild(cell);
     });
-
-    // Add cell (shown in edit mode) — reuses the same popover the FAB opens
-    const addCell = document.createElement('div');
-    addCell.className = 'add-cell';
-    addCell.textContent = '＋';
-    addCell.title = 'Add widget';
-    addCell.addEventListener('click', () => this._openPopover());
-    grid.appendChild(addCell);
   }
 
   // ── Edit mode ─────────────────────────────────────────────────
@@ -1026,8 +1024,30 @@ export class KmDashboard extends HTMLElement {
     const active = new Set(getLayout().map(e => e.id));
     const q      = query.trim().toLowerCase();
     const all    = Object.entries(WIDGETS);
+
+    // Fuzzy filter — character order must match but not contiguously.
+    // Score: prefix match > exact substring > scattered chars.
+    const score = (def, id) => {
+      if (!q) return 1;
+      const label = def.label.toLowerCase();
+      const idlc  = id.toLowerCase();
+      if (label.startsWith(q) || idlc.startsWith(q)) return 100;
+      if (label.includes(q) || idlc.includes(q))     return  50;
+      // subsequence: every char of q appears in label in order
+      let li = 0;
+      for (const c of q) {
+        const i = label.indexOf(c, li);
+        if (i === -1) return 0;
+        li = i + 1;
+      }
+      return 10;
+    };
+
     const matches = q
-      ? all.filter(([id, def]) => def.label.toLowerCase().includes(q) || id.includes(q))
+      ? all.map(([id, def]) => ({ id, def, s: score(def, id) }))
+          .filter(x => x.s > 0)
+          .sort((a, b) => b.s - a.s)
+          .map(x => [x.id, x.def])
       : all;
 
     if (!matches.length) {
@@ -1036,7 +1056,8 @@ export class KmDashboard extends HTMLElement {
     }
     const allAdded = matches.every(([id]) => active.has(id));
     if (allAdded && !q) {
-      grid.innerHTML = `<div class="popover-empty">All <b>${matches.length}</b> widgets are already on your dashboard. Remove one first, or reset the layout from the command palette.</div>`;
+      // Spec §3.4: muted one-liner, no "X" button, no illustration.
+      grid.innerHTML = `<div class="popover-empty">All widgets are on the dashboard. Use <kbd>⌘.</kbd> to search actions.</div>`;
       return;
     }
     grid.innerHTML = matches.map(([id, def]) => {
@@ -1044,7 +1065,10 @@ export class KmDashboard extends HTMLElement {
       return `
         <button class="popover-item ${added ? 'added' : ''}" data-wid="${id}" ${added ? 'disabled' : ''} type="button">
           <km-icon name="${def.icon}" size="md"></km-icon>
-          <span class="popover-item-label">${_e(def.label)}</span>
+          <span class="popover-item-body">
+            <span class="popover-item-label">${_e(def.label)}</span>
+            <span class="popover-item-desc">${_e(def.desc || '')}</span>
+          </span>
         </button>`;
     }).join('');
     grid.querySelectorAll('.popover-item:not(.added)').forEach(btn =>
@@ -1211,11 +1235,38 @@ export class KmDashboard extends HTMLElement {
           this._closePopover();
       });
     document.addEventListener('keydown', this._onDocKey = e => {
-      if (e.key === 'Escape' && this.shadowRoot.getElementById('popover-backdrop')?.classList.contains('visible')) {
+      const popoverOpen = this.shadowRoot.getElementById('popover-backdrop')?.classList.contains('visible');
+
+      // ESC closes the popover
+      if (e.key === 'Escape' && popoverOpen) {
         this._closePopover();
+        e.preventDefault();
+        return;
+      }
+
+      // Cmd+. (mac) / Ctrl+. (win/linux) opens the picker globally
+      if (e.key === '.' && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        e.preventDefault();
+        popoverOpen ? this._closePopover() : this._openPopover();
+        return;
+      }
+
+      // `/` opens the picker only when the grid (not a text field) is focused
+      if (e.key === '/' && !popoverOpen && !_isEditable(e.target)) {
+        e.preventDefault();
+        this._openPopover();
+        return;
       }
     });
   }
+}
+
+/** True when focus is inside any editable text field. */
+function _isEditable(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return el.isContentEditable
+      || tag === 'INPUT'  || tag === 'TEXTAREA'  || tag === 'SELECT';
 }
 
 function _e(s) {
