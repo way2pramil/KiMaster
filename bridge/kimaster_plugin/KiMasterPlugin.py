@@ -285,10 +285,16 @@ def _run_plugin(self):
     try:
         import websockets  # noqa: F401
     except ImportError:
+        import sys
+        if sys.platform == "win32":
+            hint = '  "C:\\Program Files\\KiCad\\10.0\\bin\\python.exe" -m pip install websockets'
+        elif sys.platform == "darwin":
+            hint = "  /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m pip install websockets"
+        else:
+            hint = "  python3 -m pip install websockets   (use KiCad's bundled Python if available)"
         _notify(
             "Missing dependency: websockets\n\n"
-            "Install via KiCad's Python:\n"
-            '  "C:\\Program Files\\KiCad\\10.0\\bin\\python.exe" -m pip install websockets',
+            "Install via KiCad's Python:\n" + hint,
             is_error=True,
         )
         return

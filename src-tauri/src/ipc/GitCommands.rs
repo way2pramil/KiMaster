@@ -56,7 +56,7 @@ pub async fn cmd_git_status(
 
     // Get project dir from active project
     let project_dir = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
         guard.active_project.as_ref()
             .and_then(|p| std::path::Path::new(&p.path).parent().map(|p| p.to_path_buf()))
     };
@@ -85,7 +85,7 @@ pub async fn cmd_git_get_history(
     limit: Option<usize>,
 ) -> Result<GitHistoryResponse, String> {
     let project_dir = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
         guard.active_project.as_ref()
             .and_then(|p| std::path::Path::new(&p.path).parent().map(|p| p.to_path_buf()))
     };
@@ -116,7 +116,7 @@ pub async fn cmd_git_diff_drc(
 ) -> Result<GitDrcDiffResponse, String> {
     // Gather from locked state, then release lock before any await
     let (pcb_path, project_dir, kicad_cli) = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
         let pcb = guard.active_project.as_ref().and_then(|p| p.pcb_file.clone());
         let dir = guard.active_project.as_ref()
             .and_then(|p| std::path::Path::new(&p.path).parent().map(|p| p.to_path_buf()));
@@ -183,7 +183,7 @@ pub async fn cmd_git_show_file(
     file_rel:    String,
 ) -> Result<String, String> {
     let project_dir = {
-        let guard = state.0.lock().unwrap();
+        let guard = state.0.lock().map_err(|e| format!("State lock poisoned: {e}"))?;
         guard.active_project.as_ref()
             .and_then(|p| std::path::Path::new(&p.path).parent().map(|p| p.to_path_buf()))
     };

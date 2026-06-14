@@ -20,7 +20,8 @@
  *   document.body.appendChild(sheet);
  */
 
-const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+const _isMac = navigator.userAgentData?.platform === 'macOS'
+  || /Mac|iPhone|iPad/.test(navigator.platform);
 
 function _formatChord(c) {
   const parts = [];

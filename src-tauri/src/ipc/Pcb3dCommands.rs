@@ -250,17 +250,46 @@ pub async fn cmd_pcb3d_export_marketing_glb(
     })
 }
 
+// ── Path safety ──────────────────────────────────────────────────────────────
+
+fn is_safe_pcb3d_path(path: &std::path::Path) -> bool {
+    let canon = path.canonicalize().or_else(|_| {
+        path.parent()
+            .and_then(|p| p.canonicalize().ok())
+            .map(|p| p.join(path.file_name().unwrap_or_default()))
+            .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, ""))
+    });
+    let canon = match canon {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let s = canon.to_string_lossy();
+    if s.contains("..") { return false; }
+    let temp = std::env::temp_dir();
+    if canon.starts_with(&temp) { return true; }
+    let allowed_exts = ["svg", "wrl", "glb", "gltf", "step", "stl", "brep", "png", "jpg"];
+    canon.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| allowed_exts.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 // ── Utility: check file exists ────────────────────────────────────────────────
 
 /// Check if a file exists on disk (used to verify exports completed).
 #[tauri::command]
 pub async fn cmd_pcb3d_file_exists(path: String) -> bool {
-    std::path::Path::new(&path).exists()
+    let p = std::path::Path::new(&path);
+    is_safe_pcb3d_path(p) && p.exists()
 }
 
 /// Read a text file — used to load SVG content for the rasterizer.
 #[tauri::command]
 pub async fn cmd_pcb3d_read_file(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    if !is_safe_pcb3d_path(p) {
+        return Err("Path not allowed".to_string());
+    }
     std::fs::read_to_string(&path)
         .map_err(|e| format!("Cannot read '{}': {}", path, e))
 }
@@ -272,6 +301,14 @@ pub async fn cmd_pcb3d_list_dir(
     dir: String,
     ext: Option<String>,
 ) -> Result<Vec<String>, String> {
+    let d = std::path::Path::new(&dir);
+    let temp = std::env::temp_dir();
+    let canon = d.canonicalize()
+        .map_err(|e| format!("Cannot resolve '{}': {}", dir, e))?;
+    if !canon.starts_with(&temp) {
+        return Err("Directory listing restricted to temp/export paths".to_string());
+    }
+
     let entries = std::fs::read_dir(&dir)
         .map_err(|e| format!("Cannot read dir '{}': {}", dir, e))?;
 

@@ -177,11 +177,20 @@ fn main() {
             // Resolve the global vault directory.
             // Priority: persisted custom path → Documents/KiMaster Library → <app_data>/vault/
             let default_vault = || -> std::path::PathBuf {
-                // Windows: %USERPROFILE%\Documents\KiMaster Library
+                // Try platform-specific Documents directory first
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(profile) = std::env::var("USERPROFILE") {
                         let docs = std::path::PathBuf::from(profile).join("Documents");
+                        if docs.exists() {
+                            return docs.join(AppConfig::GLOBAL_VAULT_DEFAULT_NAME);
+                        }
+                    }
+                }
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                {
+                    if let Some(home) = dirs::home_dir() {
+                        let docs = home.join("Documents");
                         if docs.exists() {
                             return docs.join(AppConfig::GLOBAL_VAULT_DEFAULT_NAME);
                         }

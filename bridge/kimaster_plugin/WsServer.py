@@ -230,12 +230,13 @@ class KiMasterWsServer:
         """Handle an incoming WebSocket connection.
 
         Handshake order (new):
-        1. Wait briefly for a ``hello`` message from the client.
-        2a. If ``client == "kimaster-probe"``: respond with hello_ack + metadata,
+        1. Check Origin header — reject browser-based cross-origin requests.
+        2. Wait briefly for a ``hello`` message from the client.
+        3a. If ``client == "kimaster-probe"``: respond with hello_ack + metadata,
             close immediately.  Probe connections are ALWAYS allowed regardless
             of the MAX_CLIENTS limit — they never receive board data, only
             enough metadata for the scan to identify the bridge.
-        2b. If it is a real client:
+        3b. If it is a real client:
             - If at capacity → send error, close.
             - Otherwise → accept, send board_state, enter message loop.
 
@@ -246,6 +247,17 @@ class KiMasterWsServer:
         scan probe was rejected while KiMaster was already connected, producing
         "0 instances found" even though the bridge was running.
         """
+        # ── Origin check ─────────────────────────────────────────────────
+        origin = getattr(websocket, "origin", None) or \
+                 (websocket.request_headers.get("Origin", "") if hasattr(websocket, "request_headers") else "")
+        if origin:
+            from urllib.parse import urlparse
+            parsed = urlparse(origin)
+            host = parsed.hostname or ""
+            if host not in ("", "localhost", "127.0.0.1", "tauri.localhost"):
+                _log.warning("KiMaster: rejected WS from foreign origin: %s", origin)
+                await websocket.close(4403, "Forbidden origin")
+                return
         # ── Step 1: read first message (the hello) ────────────────────────
         first_msg: dict = {}
         try:

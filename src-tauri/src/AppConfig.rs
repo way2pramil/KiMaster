@@ -48,12 +48,21 @@ pub const KICAD_CLI_DEFAULT_PATH: &str = "/usr/bin/kicad-cli";
 #[cfg(target_os = "linux")]
 pub const KICAD_PLUGIN_SUBDIR: &str = ".local/share/kicad/10.0/scripting/plugins";
 
-/// Alt fallback paths tried in order when the default is missing (Windows).
+/// Alt fallback paths tried in order when the default is missing.
 #[cfg(target_os = "windows")]
 pub const KICAD_CLI_ALT_PATHS: &[&str] = &[
     r"C:\Program Files\KiCad\9.0\bin\kicad-cli.exe",
     r"C:\Program Files (x86)\KiCad\10.0\bin\kicad-cli.exe",
     r"C:\Program Files (x86)\KiCad\9.0\bin\kicad-cli.exe",
 ];
-#[cfg(not(target_os = "windows"))]
-pub const KICAD_CLI_ALT_PATHS: &[&str] = &[];
+#[cfg(target_os = "macos")]
+pub const KICAD_CLI_ALT_PATHS: &[&str] = &[
+    "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli",
+    "/usr/local/bin/kicad-cli",
+];
+#[cfg(target_os = "linux")]
+pub const KICAD_CLI_ALT_PATHS: &[&str] = &[
+    "/usr/local/bin/kicad-cli",
+    "/snap/kicad/current/usr/bin/kicad-cli",
+    "/var/lib/flatpak/exports/bin/org.kicad.KiCad.kicad-cli",
+];

@@ -502,7 +502,7 @@ export class ExportWizard extends HTMLElement {
             <label class="radio-label" for="radio-absolute">Absolute Path</label>
             <input class="form-input" id="input-root-abs" type="text"
               value="${this._esc(p?.target === 'absolute' ? p.rootPath : '')}"
-              placeholder="C:\\Fabrication" ${p?.target !== 'absolute' || isBuiltin ? 'disabled' : ''}>
+              placeholder="${/Mac|iPhone|iPad/.test(navigator.platform) ? '/Users/me/Fabrication' : navigator.platform?.startsWith?.('Linux') ? '/home/me/fabrication' : 'C:\\\\Fabrication'}" ${p?.target !== 'absolute' || isBuiltin ? 'disabled' : ''}>
           </div>
         </div>
       </div>

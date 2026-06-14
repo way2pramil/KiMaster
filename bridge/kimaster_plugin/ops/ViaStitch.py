@@ -256,13 +256,27 @@ class ViaStitch:
         found = shutil.which(exe) or shutil.which("kicad-cli")
         if found:
             return found
-        for candidate in (
-            r"C:\Program Files\KiCad\9.0\bin\kicad-cli.exe",
-            r"C:\Program Files\KiCad\8.0\bin\kicad-cli.exe",
-            r"C:\Program Files\KiCad\7.0\bin\kicad-cli.exe",
-            "/usr/bin/kicad-cli",
-            "/usr/local/bin/kicad-cli",
-        ):
+        import sys
+        candidates = []
+        if os.name == "nt":
+            candidates = [
+                r"C:\Program Files\KiCad\10.0\bin\kicad-cli.exe",
+                r"C:\Program Files\KiCad\9.0\bin\kicad-cli.exe",
+                r"C:\Program Files\KiCad\8.0\bin\kicad-cli.exe",
+                r"C:\Program Files (x86)\KiCad\10.0\bin\kicad-cli.exe",
+            ]
+        elif sys.platform == "darwin":
+            candidates = [
+                "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli",
+                "/usr/local/bin/kicad-cli",
+            ]
+        else:
+            candidates = [
+                "/usr/bin/kicad-cli",
+                "/usr/local/bin/kicad-cli",
+                "/snap/kicad/current/usr/bin/kicad-cli",
+            ]
+        for candidate in candidates:
             if os.path.isfile(candidate):
                 return candidate
         return None
