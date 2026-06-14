@@ -34,10 +34,10 @@ import './widgets/WidgetProjectFiles.js';
 import './widgets/WidgetRecentProjects.js';
 import './widgets/WidgetBoardInfo.js';
 import './widgets/WidgetNetlistGraph.js';
-import './widgets/WidgetNotes.js';
 import './widgets/WidgetBoardRender.js';
 import './widgets/WidgetShortcuts.js';
-import { SDK_HELLO_TAG } from './widgets/WidgetSdkHello.js';
+import { WIDGET_NOTES_TAG }   from './widgets/WidgetNotes.js';
+import { SDK_HELLO_TAG }      from './widgets/WidgetSdkHello.js';
 
 // ── Widget registry ───────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ const WIDGETS = {
   'board-info':      { label:'Board info',      icon:'cpu',         tag:'km-wgt-board-info',       defaultW: 3, defaultH: 2, desc:'Size, layers, and live KiCad board summary.' },
   'netlist-graph':   { label:'Netlist graph',   icon:'graph',       tag:'km-wgt-netlist-graph',    defaultW: 3, defaultH: 2, desc:'Bezier of every net — find short candidates at a glance.' },
   'shortcuts':       { label:'Shortcuts',       icon:'grid',        tag:'km-wgt-shortcuts',        defaultW: 6, defaultH: 1, desc:'Key bindings you actually use, in one row.' },
-  'notes':           { label:'Notes',           icon:'notes',       tag:'km-wgt-notes',            defaultW: 3, defaultH: 1, desc:'Project-scoped scratchpad. Markdown-friendly.' },
+  'notes':           { label:'Notes',           icon:'notes',       tag: WIDGET_NOTES_TAG,         defaultW: 3, defaultH: 1, desc:'Project-scoped scratchpad. Markdown-friendly.' },
   'board-render':    { label:'3D render',       icon:'render',      tag:'km-wgt-board-render',     defaultW: 3, defaultH: 2, desc:'Live 3D preview of the current board.' },
   'sdk-hello':       { label:'SDK Hello',       icon:'box',         tag: SDK_HELLO_TAG,            defaultW: 3, defaultH: 1, desc:'Hello-world widget that proves the SDK is wired up.' },
 };
@@ -828,6 +828,12 @@ export class KmDashboard extends HTMLElement {
   _renderGrid() {
     const grid = this.shadowRoot.getElementById('grid');
     this._disposeInteractions();
+
+    // FLIP first — measure where each cell currently lives, BEFORE we wipe
+    // the grid. We pair this with the matching post-render step at the
+    // bottom of this function to play the "last → first" transform.
+    const firstRects = this._measureCells(grid);
+
     grid.innerHTML = '';
 
     // Build a fresh geometry bound to the live grid element. Used by both
@@ -950,6 +956,61 @@ export class KmDashboard extends HTMLElement {
 
       grid.appendChild(cell);
     });
+
+    // FLIP last → first. For each cell that was present before, find the
+    // matching new cell, measure the delta between its old and new rect,
+    // apply that delta as a transform, then animate `transform: none` on
+    // the next frame. Yields a smooth reflow animation.
+    this._playFlip(firstRects, grid);
+  }
+
+  /** Snapshot all `.wgt-cell` rects keyed by data-id. */
+  _measureCells(grid) {
+    const out = new Map();
+    for (const cell of grid.querySelectorAll('.wgt-cell')) {
+      const id = cell.dataset.id;
+      if (id) out.set(id, cell.getBoundingClientRect());
+    }
+    return out;
+  }
+
+  /**
+   * Animate cells from their previous positions to their new ones. Skips
+   * cells with no first rect (newly added) and applies a 220ms transform
+   * tween. No-op if the user has prefers-reduced-motion.
+   */
+  _playFlip(firstRects, grid) {
+    if (!firstRects.size) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const dur = 220;
+    const cells = [...grid.querySelectorAll('.wgt-cell')];
+    let inverted = 0;
+    for (const cell of cells) {
+      const id = cell.dataset.id;
+      const before = firstRects.get(id);
+      if (!before) continue;
+      const after = cell.getBoundingClientRect();
+      const dx = before.left - after.left;
+      const dy = before.top  - after.top;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      cell.style.transform = `translate(${dx}px, ${dy}px)`;
+      cell.style.transition = 'none';
+      inverted++;
+    }
+    if (!inverted) return;
+    // Next frame: clear the transform, re-enable transition → tween to new spot
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      for (const cell of cells) {
+        if (!cell.style.transform) continue;
+        cell.style.transition = `transform ${dur}ms cubic-bezier(.2,.7,.2,1)`;
+        cell.style.transform  = '';
+        const clear = () => {
+          cell.style.transition = '';
+          cell.removeEventListener('transitionend', clear);
+        };
+        cell.addEventListener('transitionend', clear);
+      }
+    }));
   }
 
   // ── Edit mode ─────────────────────────────────────────────────

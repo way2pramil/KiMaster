@@ -55,6 +55,7 @@
  */
 
 import { Logger } from '../../../../core/Logger.js';
+import { computeState, messagesFor } from './states.js';
 import '../../../ui/KmWgtShell/KmWgtShell.js';
 
 let _seq = 0;
@@ -151,25 +152,23 @@ export function defineWidget(cfg) {
       this._shell.setStateMessage('loading', { message: cfg.loadingMessage ?? 'Loading…' });
 
       const token = ++this._renderToken;
+      let lastError = null;
       try {
         const result = await cfg.load(this._ctx);
         if (token !== this._renderToken || ac.signal.aborted) return;
         if (result !== undefined) this._state = { ...this._state, ...(result ?? {}) };
-        const empty = cfg.isEmpty?.(this._state) ?? !_hasContent(this._state);
-        this._shell.setAttribute('state', empty ? 'empty' : 'ok');
-        this._shell.setStateMessage(empty ? 'empty' : 'ok', {
-          message: empty ? (cfg.emptyMessage ?? 'Nothing to show yet') : '',
-        });
-        this._render();
       } catch (e) {
         if (ac.signal.aborted) return;
         Logger.error('defineWidget', `${cfg.id} load failed`, e);
-        this._shell.setAttribute('state', 'error');
-        this._shell.setStateMessage('error', {
-          message: cfg.errorMessage ?? e?.message ?? 'Could not load widget',
-          action: { label: 'Retry', onClick: () => this._runLoad() },
-        });
+        lastError = e;
       }
+      const state = computeState(cfg, this._state, false, lastError);
+      this._shell.setAttribute('state', state);
+      this._shell.setStateMessage(state, {
+        ...messagesFor(state, cfg, lastError),
+        action: state === 'error' ? { label: 'Retry', onClick: () => this._runLoad() } : undefined,
+      });
+      this._render();
     }
 
     _render() {
@@ -226,17 +225,4 @@ export function defineWidget(cfg) {
 
   if (!customElements.get(tag)) customElements.define(tag, KmSdkWidget);
   return { tag, ctor: KmSdkWidget, cfg };
-}
-
-// Heuristic: state has content if it has any non-internal, non-null property
-function _hasContent(state) {
-  for (const k of Object.keys(state)) {
-    if (k.startsWith('__')) continue;
-    const v = state[k];
-    if (v == null) continue;
-    if (Array.isArray(v) && v.length === 0) continue;
-    if (typeof v === 'object' && v !== null && Object.keys(v).length === 0) continue;
-    return true;
-  }
-  return false;
 }

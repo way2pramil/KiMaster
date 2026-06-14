@@ -1189,10 +1189,15 @@ export class SettingsPanel extends HTMLElement {
       }
 
       case 'contentDensity': {
+        // Bridge: keep the legacy CSS-var path for the bento grid AND drive
+        // the canonical [data-density] attribute via store.density so the
+        // global D chord (cycleDensity) and tokens.css see one source of truth.
         const gaps  = { compact: '8px',  default: '12px', comfortable: '16px' };
         const space = { compact: '3px',  default: '4px',  comfortable: '6px'  };
         root.style.setProperty('--km-bento-gap',  gaps[value]  || '12px');
         root.style.setProperty('--km-space-3',    space[value] || '4px');
+        const mapped = value === 'default' ? 'cozy' : value;
+        if (store.density !== mapped) store.density = mapped;
         break;
       }
 
